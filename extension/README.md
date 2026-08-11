@@ -42,7 +42,9 @@ Unit tests cover the streaming JSON-line decoder and tolerant data normalization
 
 ## Package platform VSIX files
 
-Build the Rust backend in release mode, copy it to the matching path listed in [`bin/README.md`](bin/README.md), and preserve executable permissions. Then run:
+Build the Rust backend in release mode and stage it for this platform with
+`npm run stage-backend -- --release`, which copies it to
+`bin/<platform>-<architecture>/` and sets the executable bit. Then run:
 
 ```bash
 npm run package -- --target darwin-arm64

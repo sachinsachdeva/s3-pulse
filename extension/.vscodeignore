@@ -2,6 +2,7 @@
 .gitignore
 .vscode/**
 bin/**/README.md
+media/icon.svg
 node_modules/**
 scripts/**
 src/**

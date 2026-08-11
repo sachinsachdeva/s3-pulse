@@ -3,8 +3,13 @@
   "displayName": "S3 Pulse",
   "description": "Monitor S3 data-feed cadence, detect late arrivals, and download objects from VS Code.",
   "version": "0.1.1",
-  "publisher": "s3pulse",
+  "publisher": "SachinSachdeva",
   "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0E1624",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/sachinsachdeva/s3-pulse.git"
