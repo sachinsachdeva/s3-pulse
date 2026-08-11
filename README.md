@@ -1,5 +1,10 @@
 # S3 Pulse
 
+[![CI](https://github.com/sachinsachdeva/s3-pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/sachinsachdeva/s3-pulse/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust 1.94.1+](https://img.shields.io/badge/rust-1.94.1%2B-b7410e.svg?logo=rust&logoColor=white)](rust-toolchain.toml)
+[![VS Code 1.90+](https://img.shields.io/badge/VS%20Code-1.90%2B-0078d4.svg?logo=visualstudiocode&logoColor=white)](extension/package.json)
+
 **Live S3 feed monitoring for VS Code and the terminal.**
 
 S3 Pulse watches an Amazon S3 bucket prefix, keeps a bounded arrival history,
