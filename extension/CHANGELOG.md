@@ -37,6 +37,11 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - Setting `hidden` on the graph canvas did not hide it, because an author
   `display` rule outranks the user-agent rule for `[hidden]`.
 - Object keys ending in `/` produced an empty tooltip heading.
+- Every S3 service failure was reported as "service error" and treated as
+  retryable, because the AWS SDK's own message is only a short variant label.
+  Expired or wrong credentials, denied access, and missing buckets are now named
+  and categorised distinctly, so `accessDenied`, `credentials` and `notFound`
+  reach clients as documented.
 
 ## [0.1.1]
 

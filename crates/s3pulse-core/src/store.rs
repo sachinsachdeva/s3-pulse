@@ -10,7 +10,7 @@ use std::{
 
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
-use aws_sdk_s3::{config::Region, Client};
+use aws_sdk_s3::{config::Region, error::ProvideErrorMetadata, Client};
 use chrono::{TimeZone, Utc};
 use tokio::{
     fs::{self, OpenOptions},
@@ -123,7 +123,7 @@ impl AwsS3Store {
             .send();
         let output = tokio::select! {
             _ = cancellation.cancelled() => return Err(StoreError::cancelled()),
-            result = operation => result.map_err(|error| StoreError::aws("GetObject", error))?,
+            result = operation => result.map_err(|error| StoreError::aws("GetObject", error.code(), error.message(), &error))?,
         };
 
         let total_bytes = output
@@ -228,10 +228,9 @@ impl ObjectStore for AwsS3Store {
             // Counted before dispatch: a request that fails after reaching S3 is
             // still billable, and over-reporting cost is safer than under.
             self.meter.list_requests.fetch_add(1, Ordering::Relaxed);
-            let output = request
-                .send()
-                .await
-                .map_err(|error| StoreError::aws("ListObjectsV2", error))?;
+            let output = request.send().await.map_err(|error| {
+                StoreError::aws("ListObjectsV2", error.code(), error.message(), &error)
+            })?;
 
             for object in output.contents() {
                 let key = object.key().ok_or_else(|| {
