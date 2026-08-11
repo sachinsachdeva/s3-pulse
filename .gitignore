@@ -1,0 +1,8 @@
+/target/
+/extension/dist/
+/extension/node_modules/
+/extension/*.vsix
+/.vscode-test/
+.DS_Store
+*.log
+

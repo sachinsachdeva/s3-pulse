@@ -1,0 +1,37 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run S3 Pulse Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension"],
+      "outFiles": ["${workspaceFolder}/extension/dist/**/*.js"],
+      // The extension host does not inherit your shell environment, and the
+      // backend inherits process.env from it. Without a region here (or a
+      // default profile in ~/.aws/config) the SDK falls back to IMDS and fails
+      // with "dispatch failure". Drop the AWS_ENDPOINT_URL/key pair to test
+      // against real AWS and set AWS_PROFILE instead.
+      //
+      // These credentials must match the server started by scripts/local-s3.sh;
+      // a mismatch surfaces as InvalidAccessKeyId. The endpoint must stay an IP
+      // literal so the SDK uses path-style addressing.
+      "env": {
+        "S3PULSE_DEV_BACKEND": "${workspaceFolder}/target/debug/s3pulse",
+        "AWS_REGION": "us-east-1",
+        "AWS_ENDPOINT_URL": "http://127.0.0.1:9000",
+        "AWS_ACCESS_KEY_ID": "s3pulse",
+        "AWS_SECRET_ACCESS_KEY": "s3pulsedev"
+      },
+      "preLaunchTask": "dev: build backend and extension"
+    },
+    {
+      "name": "Debug Extension Unit Tests",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/extension/scripts/test.mjs",
+      "cwd": "${workspaceFolder}/extension",
+      "console": "integratedTerminal"
+    }
+  ]
+}

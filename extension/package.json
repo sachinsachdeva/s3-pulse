@@ -1,0 +1,261 @@
+{
+  "name": "s3-pulse",
+  "displayName": "S3 Pulse",
+  "description": "Monitor S3 data-feed cadence, detect late arrivals, and download objects from VS Code.",
+  "version": "0.1.1",
+  "publisher": "s3pulse",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sachinsachdeva/s3-pulse.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "aws",
+    "s3",
+    "monitoring",
+    "data feed",
+    "operations"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "restrictedConfigurations": [
+        "s3Pulse.backendPath"
+      ]
+    }
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:s3Pulse.feeds",
+    "onCommand:s3Pulse.addFeed",
+    "onCommand:s3Pulse.editFeed",
+    "onCommand:s3Pulse.openDashboard",
+    "onCommand:s3Pulse.startFeed",
+    "onCommand:s3Pulse.stopFeed",
+    "onCommand:s3Pulse.removeFeed",
+    "onCommand:s3Pulse.refreshFeeds",
+    "onCommand:s3Pulse.showOutput"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "s3Pulse.addFeed",
+        "title": "S3 Pulse: Add Feed",
+        "icon": "$(add)"
+      },
+      {
+        "command": "s3Pulse.editFeed",
+        "title": "S3 Pulse: Edit Feed",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "s3Pulse.openDashboard",
+        "title": "S3 Pulse: Open Dashboard",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "s3Pulse.startFeed",
+        "title": "S3 Pulse: Start Feed",
+        "icon": "$(play)"
+      },
+      {
+        "command": "s3Pulse.stopFeed",
+        "title": "S3 Pulse: Stop Feed",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "s3Pulse.removeFeed",
+        "title": "S3 Pulse: Remove Feed",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "s3Pulse.refreshFeeds",
+        "title": "S3 Pulse: Refresh Feeds",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "s3Pulse.showOutput",
+        "title": "S3 Pulse: Show Backend Output"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "s3Pulse",
+          "title": "S3 Pulse",
+          "icon": "media/pulse.svg"
+        }
+      ]
+    },
+    "views": {
+      "s3Pulse": [
+        {
+          "id": "s3Pulse.feeds",
+          "name": "Saved Feeds"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "s3Pulse.feeds",
+        "contents": "No S3 feeds are configured.\n[Add an S3 feed](command:s3Pulse.addFeed)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "s3Pulse.addFeed",
+          "when": "view == s3Pulse.feeds",
+          "group": "navigation"
+        },
+        {
+          "command": "s3Pulse.refreshFeeds",
+          "when": "view == s3Pulse.feeds",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "s3Pulse.openDashboard",
+          "when": "view == s3Pulse.feeds && viewItem =~ /s3Pulse\\.feed/",
+          "group": "inline@1"
+        },
+        {
+          "command": "s3Pulse.startFeed",
+          "when": "view == s3Pulse.feeds && viewItem == s3Pulse.feed.stopped",
+          "group": "inline@2"
+        },
+        {
+          "command": "s3Pulse.stopFeed",
+          "when": "view == s3Pulse.feeds && viewItem == s3Pulse.feed.running",
+          "group": "inline@2"
+        },
+        {
+          "command": "s3Pulse.editFeed",
+          "when": "view == s3Pulse.feeds && viewItem =~ /s3Pulse\\.feed/",
+          "group": "s3pulse@1"
+        },
+        {
+          "command": "s3Pulse.removeFeed",
+          "when": "view == s3Pulse.feeds",
+          "group": "s3pulse@9"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "S3 Pulse",
+      "properties": {
+        "s3Pulse.backendPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Absolute path to an s3pulse executable. Leave empty to use the binary bundled for this platform."
+        },
+        "s3Pulse.defaultPollIntervalSeconds": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 3600,
+          "description": "Default polling interval offered when adding a feed."
+        },
+        "s3Pulse.historyLimit": {
+          "type": "integer",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 1000,
+          "description": "Maximum number of recent object records requested and retained per dashboard."
+        },
+        "s3Pulse.defaultGraph": {
+          "type": "string",
+          "enum": [
+            "inter-arrival",
+            "files-per-bucket"
+          ],
+          "enumDescriptions": [
+            "Plot the elapsed time between arrivals.",
+            "Plot object counts in time buckets."
+          ],
+          "default": "inter-arrival",
+          "description": "Default live graph mode."
+        },
+        "s3Pulse.restartBackend": {
+          "type": "boolean",
+          "default": true,
+          "description": "Restart the backend after an unexpected exit while feeds are active."
+        },
+        "s3Pulse.backendLogLevel": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
+          "default": "info",
+          "scope": "machine-overridable",
+          "description": "Backend diagnostic level. Diagnostics are written to the S3 Pulse output channel."
+        },
+        "s3Pulse.showCostEstimate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show estimated S3 request cost when adding a feed and on the dashboard. Estimates are indicative only and exclude data transfer and storage."
+        },
+        "s3Pulse.listRequestCostPer1000": {
+          "type": "number",
+          "default": 0.005,
+          "minimum": 0,
+          "description": "Price per 1,000 S3 LIST requests, in the configured currency. Defaults to the US East (N. Virginia) S3 Standard rate; check your region's pricing."
+        },
+        "s3Pulse.getRequestCostPer1000": {
+          "type": "number",
+          "default": 0.0004,
+          "minimum": 0,
+          "description": "Price per 1,000 S3 GET requests, in the configured currency. Defaults to the US East (N. Virginia) S3 Standard rate."
+        },
+        "s3Pulse.costCurrency": {
+          "type": "string",
+          "default": "USD",
+          "description": "Currency label for cost estimates. Prices are not converted; enter rates already denominated in this currency."
+        },
+        "s3Pulse.defaultBucketMinutes": {
+          "type": "integer",
+          "default": 15,
+          "minimum": 1,
+          "maximum": 1440,
+          "description": "Bucket width in minutes offered by default when adding a feed. Each feed stores its own value."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "node ./scripts/clean.mjs",
+    "check": "tsc --noEmit",
+    "compile": "node ./esbuild.mjs",
+    "watch": "node ./esbuild.mjs --watch",
+    "test": "node ./scripts/test.mjs",
+    "stage-backend": "node ./scripts/stage-backend.mjs",
+    "package": "npm run check && npm test && npm run compile && node ./scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.3"
+  },
+  "bugs": {
+    "url": "https://github.com/sachinsachdeva/s3-pulse/issues"
+  },
+  "homepage": "https://github.com/sachinsachdeva/s3-pulse#readme"
+}

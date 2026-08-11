@@ -1,0 +1,60 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev: build backend and extension",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "backend: cargo build (debug)",
+        "backend: stage into extension/bin",
+        "extension: compile"
+      ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "backend: cargo build (debug)",
+      "type": "shell",
+      "command": "cargo build -p s3pulse-cli",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$rustc"],
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
+    },
+    {
+      // The extension falls back to extension/bin/<platform>-<arch>/s3pulse when
+      // s3Pulse.backendPath is unset, so staging the fresh build here means F5
+      // runs current code with no settings to configure.
+      "label": "backend: stage into extension/bin",
+      "type": "shell",
+      "command": "npm --prefix extension run stage-backend",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
+    },
+    {
+      "label": "extension: compile",
+      "type": "shell",
+      "command": "npm --prefix extension run compile",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$tsc"],
+      "presentation": { "reveal": "silent", "panel": "dedicated" }
+    },
+    {
+      "label": "extension: watch",
+      "type": "shell",
+      "command": "npm --prefix extension run watch",
+      "isBackground": true,
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "checks: definition of done",
+      "type": "shell",
+      "command": "cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features && npm --prefix extension run check && npm --prefix extension test && npm --prefix extension run compile",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

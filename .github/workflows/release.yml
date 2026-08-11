@@ -1,0 +1,125 @@
+name: Release
+
+# Builds one VSIX per platform. VS Code resolves platform-specific extensions at
+# install time, so each artifact bundles exactly one native backend.
+#
+# The backend depends on aws-lc-sys, a C library that is awkward to
+# cross-compile, so every target is built on a runner of its own architecture
+# rather than with a cross toolchain.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to the Marketplace after building'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+            triple: aarch64-apple-darwin
+          - target: darwin-x64
+            runner: macos-13
+            triple: x86_64-apple-darwin
+          - target: linux-x64
+            runner: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+            triple: aarch64-unknown-linux-gnu
+          - target: win32-x64
+            runner: windows-2022
+            triple: x86_64-pc-windows-msvc
+          - target: win32-arm64
+            runner: windows-11-arm
+            triple: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: ${{ matrix.triple }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # aws-lc-sys builds C code: it needs cmake everywhere, and NASM for the
+      # x86_64 Windows assembly. The other runners ship a usable toolchain.
+      - name: Install build tools (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install --no-progress -y cmake nasm
+          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
+          echo "C:\Program Files\CMake\bin" >> $env:GITHUB_PATH
+
+      - name: Build backend
+        run: cargo build --release -p s3pulse-cli --target ${{ matrix.triple }}
+
+      - name: Verify the binary runs
+        if: matrix.target != 'linux-arm64' || runner.arch == 'ARM64'
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.triple }}/release/s3pulse"
+          [ "${{ runner.os }}" = "Windows" ] && BIN="$BIN.exe"
+          "$BIN" --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ matrix.target }}
+          path: target/${{ matrix.triple }}/release/s3pulse${{ runner.os == 'Windows' && '.exe' || '' }}
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: package ${{ matrix.target }}
+    needs: backend
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64, win32-arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - run: npm ci
+        working-directory: extension
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: backend-${{ matrix.target }}
+          path: staging
+
+      # Exactly one backend is staged, so the VSIX cannot pick up a stale binary
+      # for another platform.
+      - name: Stage the backend
+        run: node extension/scripts/stage-backend.mjs --release --target ${{ matrix.target }} --from "$GITHUB_WORKSPACE/staging"
+
+      - name: Package
+        run: npm run package -- --target ${{ matrix.target }}
+        working-directory: extension
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.target }}
+          path: extension/*.vsix
+          if-no-files-found: error

@@ -1,0 +1,33 @@
+[package]
+name = "s3pulse-cli"
+description = "Command-line and JSON-RPC interface for S3 Pulse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "s3pulse_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "s3pulse"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+s3pulse-core = { path = "../s3pulse-core" }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-std"] }
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

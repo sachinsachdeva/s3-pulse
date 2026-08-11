@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/s3pulse-core", "crates/s3pulse-cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/sachinsachdeva/s3-pulse"
+rust-version = "1.94.1"
+
+[workspace.dependencies]
+async-trait = "0.1"
+aws-config = "1"
+aws-sdk-s3 = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["serde", "v4"] }

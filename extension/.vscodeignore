@@ -1,0 +1,13 @@
+.test-dist/**
+.gitignore
+.vscode/**
+bin/**/README.md
+node_modules/**
+scripts/**
+src/**
+test/**
+**/*.map
+esbuild.mjs
+tsconfig.json
+package-lock.json
+*.vsix

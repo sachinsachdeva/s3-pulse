@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.test-dist/
+*.vsix
+bin/*/s3pulse
+bin/*/s3pulse.exe
