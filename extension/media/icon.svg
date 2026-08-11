@@ -1,20 +1,25 @@
-<!-- Editable source for icon.png, the Marketplace tile.
+<!-- Marketplace tile for S3 Pulse, and the editable source for icon.png.
 
      Distinct from pulse.svg: that one is the activity-bar glyph and uses
-     stroke="currentColor" so VS Code can theme it, which makes it invisible
-     against the Marketplace's own backgrounds. This carries its own colour.
+     stroke="currentColor" so VS Code can theme it, which leaves it invisible
+     against the Marketplace's own cards. This carries its own colour.
 
-     Regenerate the PNG after editing; the Marketplace requires a 128x128 PNG
-     and will not accept SVG. -->
+     The Marketplace requires a 128x128 PNG and will not accept SVG, so after
+     editing this file re-export it to icon.png at 128x128. The two are kept
+     pixel-for-pixel equivalent. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1B2638"/>
-      <stop offset="1" stop-color="#0E1624"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#243452"/>
+      <stop offset="1" stop-color="#090F1B"/>
+    </linearGradient>
+    <linearGradient id="wave" gradientUnits="userSpaceOnUse"
+                    x1="21.33" y1="0" x2="106.67" y2="0">
+      <stop offset="0" stop-color="#5BE0FA"/>
+      <stop offset="1" stop-color="#3794FF"/>
     </linearGradient>
   </defs>
   <rect width="128" height="128" rx="26" ry="26" fill="url(#tile)"/>
-  <path d="M12.8 64h21.3l11.7-32 21.3 64 13.9-42.7 9.1 10.7h25.1"
-        fill="none" stroke="#4FC3F7" stroke-width="7.5"
+  <path d="M21.33 64.0 L38.4 64.0 L47.79 38.4 L64.85 89.6 L75.95 55.47 L83.2 64.0 L106.67 64.0" fill="none" stroke="url(#wave)" stroke-width="7.5"
         stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
