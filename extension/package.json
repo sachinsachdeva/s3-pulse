@@ -49,7 +49,8 @@
     "onCommand:s3Pulse.stopFeed",
     "onCommand:s3Pulse.removeFeed",
     "onCommand:s3Pulse.refreshFeeds",
-    "onCommand:s3Pulse.showOutput"
+    "onCommand:s3Pulse.showOutput",
+    "onCommand:s3Pulse.copyBackendPath"
   ],
   "contributes": {
     "commands": [
@@ -91,6 +92,10 @@
       {
         "command": "s3Pulse.showOutput",
         "title": "S3 Pulse: Show Backend Output"
+      },
+      {
+        "command": "s3Pulse.copyBackendPath",
+        "title": "S3 Pulse: Copy Backend (CLI) Path"
       }
     ],
     "viewsContainers": {

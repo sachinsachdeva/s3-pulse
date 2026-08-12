@@ -74,6 +74,20 @@ backend into `extension/bin/<platform>-<architecture>/`, which is where the
 extension looks when `s3Pulse.backendPath` is unset, so pressing **F5** always
 runs current code with nothing to configure.
 
+## Using the bundled CLI
+
+Each VSIX bundles the complete `s3pulse` binary, not a cut-down server, so the
+installed extension already carries the CLI. **S3 Pulse: Copy Backend (CLI)
+Path** puts its location on the clipboard, or find it directly:
+
+```bash
+ls -d ~/.vscode/extensions/*.s3-pulse-*/bin/*/s3pulse
+```
+
+The path contains the extension version, so it moves on every update — a symlink
+into it will break silently. For regular terminal use, build the CLI separately
+with `cargo build --release -p s3pulse-cli` and put that on your `PATH`.
+
 ## Release packaging
 
 VS Code resolves platform-specific extensions at install time, so a release is

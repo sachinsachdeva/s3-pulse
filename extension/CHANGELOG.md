@@ -22,6 +22,8 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
   it, so the Extension Development Host runs current code with no settings to
   configure.
 
+- **S3 Pulse: Copy Backend (CLI) Path** command. The bundled backend is the
+  complete `s3pulse` CLI, and nothing previously revealed where it lives.
 - Alerting: a status-bar indicator summarising the health of every watched feed,
   and notifications when one goes late, arrives the wrong size, or stops with an
   error. Health is tracked whether or not a dashboard is open. A single ongoing

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { errorMessage, formatCost, normalizeTarget, normalizeWatchStatuses, projectedMonthlyCost } from './adapters';
 import { AlertController } from './alerts';
-import { BackendService } from './backend';
+import { BackendService, discoverBackendPath } from './backend';
 import { costModel, DashboardManager } from './dashboard';
 import { FeedTreeItem, FeedTreeProvider } from './feedTree';
 import type { CostModel, WatcherDefinition } from './model';
@@ -152,6 +152,29 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         tree.refresh();
       });
+    }),
+    vscode.commands.registerCommand('s3Pulse.copyBackendPath', async () => {
+      // The bundled binary is the complete CLI, not a cut-down server, but its
+      // path contains the extension version and so moves on every update.
+      // discoverBackendPath resolves the configured override when there is one.
+      let backendPath: string;
+      try {
+        backendPath = await discoverBackendPath(context.extensionPath);
+      } catch (error) {
+        void vscode.window.showErrorMessage(`S3 Pulse: ${errorMessage(error)}`);
+        return;
+      }
+      await vscode.env.clipboard.writeText(backendPath);
+      const reveal = process.platform === 'darwin'
+        ? 'Reveal in Finder'
+        : process.platform === 'win32' ? 'Reveal in File Explorer' : 'Open Containing Folder';
+      const choice = await vscode.window.showInformationMessage(
+        `Copied the S3 Pulse backend path. This binary is the full s3pulse CLI — run it with watch, stats, history, list or download.`,
+        reveal
+      );
+      if (choice === reveal) {
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(backendPath));
+      }
     }),
     vscode.commands.registerCommand('s3Pulse.showOutput', () => output.show(true)),
     vscode.workspace.onDidChangeConfiguration((event) => {
