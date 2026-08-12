@@ -12,7 +12,17 @@ rust-version = "1.94.1"
 [workspace.dependencies]
 async-trait = "0.1"
 aws-config = "1"
-aws-sdk-s3 = "1"
+# The default feature set includes "rustls", which is the legacy alias for
+# aws-smithy-http-client/legacy-rustls-ring and drags in rustls 0.21 and
+# hyper-rustls 0.24 alongside the modern stack. That old path carries
+# RUSTSEC-2026-0098. "default-https-client" is the current TLS client, so the
+# defaults are listed explicitly with the legacy alias omitted.
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+    "sigv4a",
+    "http-1x",
+    "default-https-client",
+    "rt-tokio",
+] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 clap = { version = "4", features = ["derive", "env"] }

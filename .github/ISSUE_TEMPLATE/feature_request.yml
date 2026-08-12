@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest something S3 Pulse should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `docs/ideas.md` records what has already been considered and why it was
+        or was not built — worth a look first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to find out about a feed, and what makes that hard today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This helps answer "is my feed arriving when it should?" rather than making S3 Pulse a general S3 browser

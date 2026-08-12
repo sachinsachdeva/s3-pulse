@@ -1,0 +1,52 @@
+name: Bug report
+description: Something behaves differently from what it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste AWS credentials, bucket names you consider sensitive,
+        or full object keys if they contain confidential information.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: |
+        Steps, ideally against a local server (`./scripts/local-s3.sh up`) rather
+        than a real bucket.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Extension version, or `s3pulse --version` for the CLI.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options: [VS Code extension, CLI, JSON-RPC backend, Not sure]
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15 arm64, Windows 11 x64, Ubuntu 24.04 x64
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output
+      description: |
+        From **S3 Pulse: Show Backend Output**, or stderr for the CLI. Redact
+        anything sensitive.
+      render: text

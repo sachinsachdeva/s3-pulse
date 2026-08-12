@@ -48,6 +48,14 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - Row actions in the object grid are compact icon buttons instead of text
   buttons. The previous wording is retained as the accessible name.
 
+### Security
+
+- Dropped the legacy `rustls` feature from the AWS SDK dependency. It is an
+  alias for `legacy-rustls-ring` and pulled rustls 0.21 and hyper-rustls 0.24 in
+  alongside the modern TLS stack, carrying RUSTSEC-2026-0098. HTTPS now goes
+  solely through the current client. `cargo-deny` runs in CI so the advisory
+  database and licence allow-list are actually enforced.
+
 ### Fixed
 
 - The download dialog proposed "Untitled" instead of the object's file name

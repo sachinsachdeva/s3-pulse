@@ -1,0 +1,12 @@
+# Normalise line endings in the repository regardless of the checkout platform.
+# The release workflow builds on a Windows runner, so without this a CRLF
+# checkout could reach a shell script or a Rust source file.
+* text=auto eol=lf
+
+# Shell scripts must stay LF even on a Windows checkout, or bash cannot run them.
+*.sh text eol=lf
+
+# Binaries and archives must never be normalised.
+*.png binary
+*.vsix binary
+*.parquet binary

@@ -22,6 +22,17 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
 
+  # deny.toml has existed since the first commit but nothing ran it, so the
+  # licence allow-list and the advisory database were never actually enforced.
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
+
   extension:
     name: VS Code extension
     runs-on: ubuntu-latest
