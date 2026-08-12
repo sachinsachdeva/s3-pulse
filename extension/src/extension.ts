@@ -7,7 +7,8 @@ import {
   normalizeTarget,
   normalizeWatchStatuses,
   projectedMonthlyCost,
-  templateProblem
+  templateProblem,
+  timeZoneProblem
 } from './adapters';
 import { AlertController } from './alerts';
 import { BackendService, discoverBackendPath } from './backend';
@@ -310,7 +311,47 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
   }
 
   let lookbackPeriods = existing?.lookbackPeriods ?? 1;
+  let timeZone = existing?.timeZone;
   if (hasDateTemplate(target)) {
+    // The zone is not cosmetic: a feed partitioned by Sydney date is writing to
+    // 20260812/ while UTC is still on the 11th, so the wrong zone watches a
+    // prefix nothing is writing to for hours at a time.
+    const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const zoneChoices = [...new Set([existing?.timeZone, local, 'UTC'].filter(Boolean))] as string[];
+    const zone = await vscode.window.showQuickPick(
+      [
+        ...zoneChoices.map((name) => ({
+          label: name,
+          description: name === existing?.timeZone ? 'Current' : name === local ? 'This machine' : undefined
+        })),
+        { label: 'Other…', description: 'Enter an IANA zone name' }
+      ],
+      {
+        title: `${title} — date template`,
+        placeHolder: 'Which time zone are the date partitions written in?',
+        ignoreFocusOut: true
+      }
+    );
+    if (!zone) {
+      return undefined;
+    }
+    if (zone.label === 'Other…') {
+      const typed = await vscode.window.showInputBox({
+        title: `${title} — time zone`,
+        prompt: 'IANA time zone name',
+        placeHolder: 'Australia/Sydney',
+        value: existing?.timeZone ?? local,
+        ignoreFocusOut: true,
+        validateInput: (value) => timeZoneProblem(value)
+      });
+      if (typed === undefined) {
+        return undefined;
+      }
+      timeZone = typed.trim() || undefined;
+    } else {
+      timeZone = zone.label === 'UTC' ? undefined : zone.label;
+    }
+
     const chosen = await vscode.window.showQuickPick(
       [
         { label: 'Current period and the one before', description: 'Recommended — covers files still landing after a rollover', periods: 1 },
@@ -341,7 +382,8 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
     expectedIntervalSeconds: expectedInput.trim() ? Number(expectedInput) : undefined,
     historyLimit: Number.isInteger(historyLimit) ? Math.min(1_000, Math.max(100, historyLimit)) : 1_000,
     bucketMinutes: selectedBucket.minutes,
-    lookbackPeriods
+    lookbackPeriods,
+    timeZone
   };
 }
 

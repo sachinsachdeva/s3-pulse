@@ -4,6 +4,7 @@ import {
   downloadFileName,
   hasDateTemplate,
   templateProblem,
+  timeZoneProblem,
   estimateCost,
   formatCost,
   normalizeRequestCounts,
@@ -156,4 +157,12 @@ test('template detection decides whether lookback is even relevant', () => {
   assert.equal(hasDateTemplate('s3://bucket/trades/{HH}/'), true);
   assert.equal(hasDateTemplate('s3://bucket/trades/'), false);
   assert.equal(hasDateTemplate('s3://bucket/odd{{name}}/'), false, 'escaped braces are not a template');
+});
+
+test('time zone names are validated against the platform database', () => {
+  assert.equal(timeZoneProblem('Australia/Sydney'), undefined);
+  assert.equal(timeZoneProblem('UTC'), undefined);
+  assert.equal(timeZoneProblem(''), undefined, 'empty means UTC, not an error');
+  assert.match(timeZoneProblem('Australia/Sidney') ?? '', /Unknown time zone/);
+  assert.match(timeZoneProblem('GMT+10') ?? '', /Unknown time zone/);
 });

@@ -25,7 +25,9 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - Date-templated targets: `s3://bucket/trades/{yyyy}{MM}{dd}/` resolves to the
   current period at every poll, so a date-partitioned feed no longer needs a new
   definition every day. Also watches earlier periods, one by default, because a
-  rollover is not clean. Placeholders resolve in UTC.
+  rollover is not clean. Placeholders resolve in the feed's own IANA time zone
+  (default UTC), which matters because a feed partitioned by Sydney date is
+  writing tomorrow's prefix while UTC is still on today.
 - **S3 Pulse: Copy Backend (CLI) Path** command. The bundled backend is the
   complete `s3pulse` CLI, and nothing previously revealed where it lives.
 - Alerting: a status-bar indicator summarising the health of every watched feed,

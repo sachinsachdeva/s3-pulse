@@ -1,12 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
+use chrono_tz::Tz;
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    DateTemplate, ObjectStore, PollResult, RollingHistory, S3Uri, StoreError, WatcherConfig,
-    WatcherError, WatcherEvent,
+    parse_time_zone, DateTemplate, ObjectStore, PollResult, RollingHistory, S3Uri, StoreError,
+    WatcherConfig, WatcherError, WatcherEvent,
 };
 
 pub type SharedHistory = Arc<RwLock<RollingHistory>>;
@@ -23,6 +24,7 @@ pub struct PollingWatcher {
     /// Parsed once at construction; `None` for an ordinary target, which then
     /// behaves exactly as it did before templates existed.
     template: Option<DateTemplate>,
+    zone: Tz,
 }
 
 impl PollingWatcher {
@@ -34,11 +36,16 @@ impl PollingWatcher {
         )?;
         let template =
             DateTemplate::parse(&config.target.prefix).map_err(WatcherError::InvalidTemplate)?;
+        let zone = match config.time_zone.as_deref() {
+            Some(name) => parse_time_zone(name).map_err(WatcherError::InvalidTemplate)?,
+            None => Tz::UTC,
+        };
         Ok(Self {
             config,
             store,
             history: Arc::new(RwLock::new(history)),
             template,
+            zone,
         })
     }
 
@@ -58,7 +65,7 @@ impl PollingWatcher {
         match &self.template {
             None => vec![self.config.target.clone()],
             Some(template) => template
-                .resolve(at, self.config.lookback_periods)
+                .resolve(at, self.config.lookback_periods, self.zone)
                 .into_iter()
                 .map(|prefix| S3Uri {
                     bucket: self.config.target.bucket.clone(),
@@ -245,6 +252,7 @@ mod tests {
             poll_interval_seconds: 30,
             expected_interval_seconds: Some(10),
             lookback_periods: 1,
+            time_zone: None,
             max_history: 2,
         }
     }
@@ -336,6 +344,7 @@ mod template_tests {
             expected_interval_seconds: None,
             max_history: 100,
             lookback_periods: lookback,
+            time_zone: None,
         }
     }
 

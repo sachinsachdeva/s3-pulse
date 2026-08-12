@@ -40,6 +40,9 @@ pub struct WatchDefinition {
     /// Earlier periods to also watch when `target` carries date placeholders.
     #[serde(default = "default_lookback_periods")]
     pub lookback_periods: u32,
+    /// IANA zone the date placeholders resolve in. Defaults to UTC.
+    #[serde(default)]
+    pub time_zone: Option<String>,
 }
 
 fn default_lookback_periods() -> u32 {

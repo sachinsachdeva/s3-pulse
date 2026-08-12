@@ -40,6 +40,14 @@ pub struct WatcherConfig {
     /// other than UTC. Ignored for a target without placeholders.
     #[serde(default = "default_lookback_periods")]
     pub lookback_periods: u32,
+    /// IANA zone the date placeholders resolve in, for example
+    /// `Australia/Sydney`. Defaults to UTC.
+    ///
+    /// This is not cosmetic: a feed partitioned by Sydney date writes to
+    /// `20260812/` while UTC is still on the 11th, so resolving in the wrong
+    /// zone watches a prefix nothing is writing to for hours at a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_zone: Option<String>,
 }
 
 fn default_lookback_periods() -> u32 {
@@ -58,6 +66,7 @@ impl WatcherConfig {
             expected_interval_seconds: None,
             max_history: DEFAULT_HISTORY_CAPACITY,
             lookback_periods: default_lookback_periods(),
+            time_zone: None,
         }
     }
 

@@ -23,22 +23,34 @@ A watcher definition uses camel-case JSON fields:
 }
 ```
 
-`target` may carry date placeholders, in which case `lookbackPeriods` (default
-`1`) says how many earlier periods to watch alongside the current one:
+`target` may carry date placeholders, resolved at every poll:
 
 ```json
-{"target": "s3://prod-data/trades/{yyyy}{MM}{dd}/", "lookbackPeriods": 1}
+{
+  "target": "s3://prod-data/trades/{yyyy}{MM}{dd}/",
+  "lookbackPeriods": 1,
+  "timeZone": "Australia/Sydney"
+}
 ```
 
 Recognised placeholders are `{yyyy}` `{yy}` `{MM}` `{M}` `{dd}` `{d}` `{HH}`
 `{H}`; `{{` and `}}` are literal braces. The period is the finest placeholder
-present, so the example above resolves daily. **Placeholders resolve in UTC**,
-and the lookback exists because a rollover is not clean — files for the previous
-period can still arrive — and doubles as slack for a feed partitioned in another
-zone. Each resolved prefix is listed separately and therefore billed separately,
-so `lookbackPeriods: 1` costs twice `0`. An unusable placeholder is rejected
-when the watcher starts rather than silently watching a prefix nothing writes
-to.
+present, so the example above resolves daily.
+
+`timeZone` is an IANA name and defaults to UTC. It must match the zone the
+partitions are *written* in. A feed partitioned by Sydney date is already
+writing to `20260812/` while UTC is still on the 11th, so resolving in UTC would
+watch a prefix nothing is writing to for around ten hours a day. `lookbackPeriods`
+cannot compensate: it steps backwards, and for a zone ahead of UTC the live
+partition is ahead, not behind. Daylight-saving transitions are handled by
+resolving on the local calendar, so a day step is always the previous local date.
+
+`lookbackPeriods` (default `1`) also watches earlier periods, because a rollover
+is not clean — files for the previous period can still arrive after it ends.
+Each resolved prefix is listed separately and therefore billed separately, so
+`lookbackPeriods: 1` costs twice `0`. An unusable placeholder or an unknown zone
+is rejected when the watcher starts, rather than silently watching a prefix
+nothing writes to.
 
 Only `target` is required. The server generates an ID and derives a name when
 they are not

@@ -73,7 +73,8 @@ function decodeWatchers(value: unknown): WatcherDefinition[] {
       historyLimit: boundedInteger(source.historyLimit, 100, 1_000, 1_000),
       // Feeds saved before this setting existed fall back to the old default.
       bucketMinutes: boundedInteger(source.bucketMinutes, 1, 1_440, 15),
-      lookbackPeriods: boundedInteger(source.lookbackPeriods, 0, 30, 1)
+      lookbackPeriods: boundedInteger(source.lookbackPeriods, 0, 30, 1),
+      timeZone: optionalString(source.timeZone)
     });
   }
   return watchers.sort((left, right) => left.name.localeCompare(right.name));

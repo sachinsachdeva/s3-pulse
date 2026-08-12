@@ -23,6 +23,8 @@ pub enum TemplateError {
     UnclosedPlaceholder,
     #[error("unmatched }} in the target; write }}}} for a literal brace")]
     UnmatchedBrace,
+    #[error("unknown time zone: {0}; use an IANA name such as Australia/Sydney or UTC")]
+    UnknownTimeZone(String),
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]

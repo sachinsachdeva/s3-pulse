@@ -5,15 +5,27 @@
 //! poll, and `s3://bucket/trades/{yyyy}{MM}{dd}/` gives the compact `20260812`
 //! form from the same placeholders.
 //!
-//! Placeholders resolve in **UTC**. That is a deliberate v1 limit rather than an
-//! oversight: a per-feed time zone means either compiling the tz database into
-//! every bundled binary or getting DST wrong, and the lookback window already
-//! absorbs the few hours of skew a non-UTC partitioning scheme would introduce.
-//! A time zone can be added later without breaking anything.
+//! Placeholders resolve in a named IANA time zone, defaulting to UTC. The zone
+//! matters more than it first appears: a feed partitioned by Sydney date is
+//! writing to `20260812/` while UTC is still on the 11th, so resolving in UTC
+//! would watch the wrong prefix for ten hours a day. Lookback cannot rescue
+//! that — it steps backwards, and the live partition is *ahead* of UTC.
+//!
+//! Resolution converts the instant to local time once and then does all
+//! arithmetic on the naive local calendar. That is what a writer partitioning by
+//! local date actually does, and it sidesteps DST ambiguity entirely because the
+//! result is never converted back to an instant.
 
-use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDateTime, Timelike, Utc};
+use chrono_tz::Tz;
 
 use crate::TemplateError;
+
+/// Parses an IANA zone name such as `Australia/Sydney`.
+pub fn parse_time_zone(name: &str) -> Result<Tz, TemplateError> {
+    name.parse::<Tz>()
+        .map_err(|_| TemplateError::UnknownTimeZone(name.to_owned()))
+}
 
 /// The finest unit a template varies by, which is what "one period back" means.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,7 +72,7 @@ impl Field {
         }
     }
 
-    fn render(self, at: DateTime<Utc>) -> String {
+    fn render(self, at: NaiveDateTime) -> String {
         match self {
             Self::Year4 => format!("{:04}", at.year()),
             Self::Year2 => format!("{:02}", at.year().rem_euclid(100)),
@@ -85,6 +97,14 @@ enum Segment {
 pub struct DateTemplate {
     segments: Vec<Segment>,
     granularity: Granularity,
+}
+
+#[cfg(test)]
+impl DateTemplate {
+    /// Test helper: resolve in UTC.
+    fn resolve_utc(&self, at: DateTime<Utc>, lookback: u32) -> Vec<String> {
+        self.resolve(at, lookback, Tz::UTC)
+    }
 }
 
 impl DateTemplate {
@@ -161,18 +181,18 @@ impl DateTemplate {
         self.granularity
     }
 
-    /// Renders the prefixes to watch: the period containing `at`, plus
-    /// `lookback` earlier ones.
+    /// Renders the prefixes to watch: the period containing `at` as seen in
+    /// `zone`, plus `lookback` earlier ones.
     ///
-    /// The lookback exists because a rollover is not clean — files for
-    /// yesterday can still land after midnight — and it doubles as slack for a
-    /// feed partitioned in a zone other than UTC.
+    /// The lookback exists because a rollover is not clean — files for the
+    /// previous period can still land after midnight.
     ///
     /// Newest first, deduplicated.
-    pub fn resolve(&self, at: DateTime<Utc>, lookback: u32) -> Vec<String> {
+    pub fn resolve(&self, at: DateTime<Utc>, lookback: u32, zone: Tz) -> Vec<String> {
+        let local = at.with_timezone(&zone).naive_local();
         let mut prefixes = Vec::new();
         for step in 0..=lookback {
-            let moment = self.step_back(at, step);
+            let moment = self.step_back(local, step);
             let rendered = self.render(moment);
             if !prefixes.contains(&rendered) {
                 prefixes.push(rendered);
@@ -181,7 +201,7 @@ impl DateTemplate {
         prefixes
     }
 
-    fn render(&self, at: DateTime<Utc>) -> String {
+    fn render(&self, at: NaiveDateTime) -> String {
         let mut out = String::new();
         for segment in &self.segments {
             match segment {
@@ -193,8 +213,9 @@ impl DateTemplate {
     }
 
     /// Calendar arithmetic, not duration subtraction: months and years are not
-    /// fixed numbers of seconds.
-    fn step_back(&self, at: DateTime<Utc>, steps: u32) -> DateTime<Utc> {
+    /// fixed numbers of seconds. Operates on naive local time, so a day step is
+    /// the previous local date regardless of any DST transition in between.
+    fn step_back(&self, at: NaiveDateTime, steps: u32) -> NaiveDateTime {
         if steps == 0 {
             return at;
         }
@@ -209,19 +230,20 @@ impl DateTemplate {
                 // Clamp the day so stepping back from the 31st into a shorter
                 // month stays inside that month.
                 let day = at.day().min(days_in_month(year, month));
-                Utc.with_ymd_and_hms(year, month, day, at.hour(), at.minute(), at.second())
-                    .single()
-                    .unwrap_or(at)
+                naive(year, month, day, at).unwrap_or(at)
             }
             Granularity::Year => {
                 let year = at.year() - steps as i32;
                 let day = at.day().min(days_in_month(year, at.month()));
-                Utc.with_ymd_and_hms(year, at.month(), day, at.hour(), at.minute(), at.second())
-                    .single()
-                    .unwrap_or(at)
+                naive(year, at.month(), day, at).unwrap_or(at)
             }
         }
     }
+}
+
+fn naive(year: i32, month: u32, day: u32, at: NaiveDateTime) -> Option<NaiveDateTime> {
+    chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .and_then(|date| date.and_hms_opt(at.hour(), at.minute(), at.second()))
 }
 
 fn finer_of(left: Granularity, right: Granularity) -> Granularity {
@@ -270,7 +292,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            hive.resolve(at("2026-08-12T09:30:00Z"), 0),
+            hive.resolve_utc(at("2026-08-12T09:30:00Z"), 0),
             vec!["trades/2026/08/12/"]
         );
 
@@ -279,7 +301,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            compact.resolve(at("2026-08-12T09:30:00Z"), 0),
+            compact.resolve_utc(at("2026-08-12T09:30:00Z"), 0),
             vec!["trades/20260812/"]
         );
     }
@@ -291,7 +313,7 @@ mod tests {
             .unwrap();
         // Just after midnight, yesterday's prefix can still be receiving files.
         assert_eq!(
-            template.resolve(at("2026-08-12T00:05:00Z"), 1),
+            template.resolve_utc(at("2026-08-12T00:05:00Z"), 1),
             vec!["trades/20260812/", "trades/20260811/"]
         );
     }
@@ -300,16 +322,16 @@ mod tests {
     fn stepping_back_crosses_month_and_year_boundaries() {
         let daily = DateTemplate::parse("{yyyy}/{MM}/{dd}/").unwrap().unwrap();
         assert_eq!(
-            daily.resolve(at("2026-03-01T00:10:00Z"), 1),
+            daily.resolve_utc(at("2026-03-01T00:10:00Z"), 1),
             vec!["2026/03/01/", "2026/02/28/"]
         );
         assert_eq!(
-            daily.resolve(at("2026-01-01T00:10:00Z"), 1),
+            daily.resolve_utc(at("2026-01-01T00:10:00Z"), 1),
             vec!["2026/01/01/", "2025/12/31/"]
         );
         // 2024 is a leap year, so the day before 1 March is the 29th.
         assert_eq!(
-            daily.resolve(at("2024-03-01T00:10:00Z"), 1),
+            daily.resolve_utc(at("2024-03-01T00:10:00Z"), 1),
             vec!["2024/03/01/", "2024/02/29/"]
         );
     }
@@ -321,21 +343,21 @@ mod tests {
             .unwrap();
         assert_eq!(hourly.granularity(), Granularity::Hour);
         assert_eq!(
-            hourly.resolve(at("2026-08-12T00:30:00Z"), 1),
+            hourly.resolve_utc(at("2026-08-12T00:30:00Z"), 1),
             vec!["2026/08/12/00/", "2026/08/11/23/"]
         );
 
         let monthly = DateTemplate::parse("{yyyy}/{MM}/").unwrap().unwrap();
         assert_eq!(monthly.granularity(), Granularity::Month);
         assert_eq!(
-            monthly.resolve(at("2026-01-15T00:00:00Z"), 1),
+            monthly.resolve_utc(at("2026-01-15T00:00:00Z"), 1),
             vec!["2026/01/", "2025/12/"]
         );
 
         // Stepping a month back from the 31st must stay inside the shorter month.
         let monthly_day = DateTemplate::parse("{yyyy}/{MM}/").unwrap().unwrap();
         assert_eq!(
-            monthly_day.resolve(at("2026-03-31T00:00:00Z"), 1),
+            monthly_day.resolve_utc(at("2026-03-31T00:00:00Z"), 1),
             vec!["2026/03/", "2026/02/"]
         );
     }
@@ -344,12 +366,12 @@ mod tests {
     fn unpadded_variants_render_without_leading_zeroes() {
         let template = DateTemplate::parse("{yyyy}-{M}-{d}/").unwrap().unwrap();
         assert_eq!(
-            template.resolve(at("2026-08-05T00:00:00Z"), 0),
+            template.resolve_utc(at("2026-08-05T00:00:00Z"), 0),
             vec!["2026-8-5/"]
         );
         let short_year = DateTemplate::parse("{yy}{MM}{dd}/").unwrap().unwrap();
         assert_eq!(
-            short_year.resolve(at("2026-08-05T00:00:00Z"), 0),
+            short_year.resolve_utc(at("2026-08-05T00:00:00Z"), 0),
             vec!["260805/"]
         );
     }
@@ -360,7 +382,7 @@ mod tests {
         // prefix repeatedly within one year.
         let yearly = DateTemplate::parse("{yyyy}/").unwrap().unwrap();
         assert_eq!(
-            yearly.resolve(at("2026-08-12T00:00:00Z"), 2),
+            yearly.resolve_utc(at("2026-08-12T00:00:00Z"), 2),
             vec!["2026/", "2025/", "2024/"]
         );
     }
@@ -369,11 +391,81 @@ mod tests {
     fn braces_can_still_be_literal() {
         let template = DateTemplate::parse("odd{{name}}/{yyyy}/").unwrap().unwrap();
         assert_eq!(
-            template.resolve(at("2026-08-12T00:00:00Z"), 0),
+            template.resolve_utc(at("2026-08-12T00:00:00Z"), 0),
             vec!["odd{name}/2026/"]
         );
         // Escaped braces alone are not a template.
         assert_eq!(DateTemplate::parse("odd{{name}}/").unwrap(), None);
+    }
+
+    #[test]
+    fn a_zone_ahead_of_utc_resolves_to_its_own_local_date() {
+        let template = DateTemplate::parse("trades/{yyyy}{MM}{dd}/")
+            .unwrap()
+            .unwrap();
+        let sydney = parse_time_zone("Australia/Sydney").unwrap();
+
+        // 14:30 UTC on the 11th is 00:30 on the 12th in Sydney, and a feed
+        // partitioned by Sydney date is already writing to 20260812.
+        let instant = at("2026-08-11T14:30:00Z");
+        assert_eq!(
+            template.resolve(instant, 0, sydney),
+            vec!["trades/20260812/"]
+        );
+
+        // Resolving the same instant in UTC gives the previous day, and no
+        // amount of lookback reaches forward to the live partition -- which is
+        // exactly why the zone has to be configurable.
+        assert_eq!(
+            template.resolve(instant, 1, Tz::UTC),
+            vec!["trades/20260811/", "trades/20260810/"]
+        );
+        assert!(!template
+            .resolve(instant, 5, Tz::UTC)
+            .contains(&"trades/20260812/".to_owned()));
+    }
+
+    #[test]
+    fn a_zone_behind_utc_also_resolves_to_its_own_local_date() {
+        let template = DateTemplate::parse("{yyyy}{MM}{dd}/").unwrap().unwrap();
+        let new_york = parse_time_zone("America/New_York").unwrap();
+        // 02:00 UTC on the 12th is 22:00 on the 11th in New York.
+        assert_eq!(
+            template.resolve(at("2026-08-12T02:00:00Z"), 0, new_york),
+            vec!["20260811/"]
+        );
+    }
+
+    #[test]
+    fn a_day_step_crosses_a_dst_transition_as_one_calendar_day() {
+        let template = DateTemplate::parse("{yyyy}{MM}{dd}/").unwrap().unwrap();
+        let sydney = parse_time_zone("Australia/Sydney").unwrap();
+
+        // Sydney leaves daylight saving on 5 April 2026, making that day 25
+        // hours long. Stepping back must still give the previous date, which
+        // subtracting a fixed 24 hours would not guarantee.
+        let after = at("2026-04-05T20:00:00Z"); // 06:00 on the 6th in Sydney
+        assert_eq!(
+            template.resolve(after, 1, sydney),
+            vec!["20260406/", "20260405/"]
+        );
+
+        // And entering daylight saving on 4 October 2026, a 23-hour day.
+        let spring = at("2026-10-04T20:00:00Z"); // 07:00 on the 5th in Sydney
+        assert_eq!(
+            template.resolve(spring, 1, sydney),
+            vec!["20261005/", "20261004/"]
+        );
+    }
+
+    #[test]
+    fn an_unknown_zone_is_rejected_by_name() {
+        assert!(matches!(
+            parse_time_zone("Australia/Sidney").unwrap_err(),
+            TemplateError::UnknownTimeZone(name) if name == "Australia/Sidney"
+        ));
+        assert_eq!(parse_time_zone("UTC").unwrap(), Tz::UTC);
+        assert!(parse_time_zone("Australia/Sydney").is_ok());
     }
 
     #[test]

@@ -71,6 +71,11 @@ pub struct WatchArgs {
     /// as {yyyy}/{MM}/{dd}/. Covers files still landing after a rollover.
     #[arg(long, default_value_t = 1)]
     pub lookback: u32,
+
+    /// IANA time zone the date placeholders resolve in, for example
+    /// Australia/Sydney. Defaults to UTC.
+    #[arg(long)]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -94,6 +99,11 @@ pub struct HistoryArgs {
     /// as {yyyy}/{MM}/{dd}/. Covers files still landing after a rollover.
     #[arg(long, default_value_t = 1)]
     pub lookback: u32,
+
+    /// IANA time zone the date placeholders resolve in, for example
+    /// Australia/Sydney. Defaults to UTC.
+    #[arg(long)]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -113,6 +123,11 @@ pub struct QueryArgs {
     /// as {yyyy}/{MM}/{dd}/. Covers files still landing after a rollover.
     #[arg(long, default_value_t = 1)]
     pub lookback: u32,
+
+    /// IANA time zone the date placeholders resolve in, for example
+    /// Australia/Sydney. Defaults to UTC.
+    #[arg(long)]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Args)]

@@ -184,6 +184,7 @@ where
             expected_interval_seconds: definition.expected_interval_seconds,
             max_history: definition.history_limit,
             lookback_periods: definition.lookback_periods,
+            time_zone: definition.time_zone.clone(),
         };
         let mut watcher =
             PollingWatcher::new(config, Arc::clone(&store)).map_err(ErrorObject::invalid_params)?;
@@ -750,6 +751,7 @@ mod tests {
             region: None,
             poll_interval_seconds: 3_600,
             lookback_periods: 1,
+            time_zone: None,
             expected_interval_seconds: None,
             history_limit: 10,
         }

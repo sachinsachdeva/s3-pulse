@@ -14,6 +14,11 @@ export interface WatcherDefinition {
    * Ignored for a plain target.
    */
   readonly lookbackPeriods: number;
+  /**
+   * IANA zone the date placeholders resolve in, for example Australia/Sydney.
+   * Undefined means UTC.
+   */
+  readonly timeZone?: string;
 }
 
 /** Cumulative billable S3 requests reported by the backend for one watcher. */

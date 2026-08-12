@@ -352,6 +352,24 @@ export function templateProblem(target: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Validates an IANA zone name using the platform's own database, so the wizard
+ * rejects a typo rather than letting it become a feed that watches the wrong
+ * prefix for hours a day.
+ */
+export function timeZoneProblem(value: string): string | undefined {
+  const name = value.trim();
+  if (!name) {
+    return undefined;
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: name });
+    return undefined;
+  } catch {
+    return `Unknown time zone "${name}"; use an IANA name such as Australia/Sydney`;
+  }
+}
+
 /** Whether a target carries any date placeholder at all. */
 export function hasDateTemplate(target: string): boolean {
   return /\{(yyyy|yy|MM|M|dd|d|HH|H)\}/.test(target.replace(/\{\{|\}\}/g, ''));
@@ -367,7 +385,8 @@ export function serializeWatcher(watcher: WatcherDefinition): UnknownRecord {
     pollIntervalSeconds: watcher.pollIntervalSeconds,
     expectedIntervalSeconds: watcher.expectedIntervalSeconds,
     historyLimit: watcher.historyLimit,
-    lookbackPeriods: watcher.lookbackPeriods
+    lookbackPeriods: watcher.lookbackPeriods,
+    timeZone: watcher.timeZone
   };
 }
 

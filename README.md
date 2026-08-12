@@ -16,7 +16,7 @@ than act as another general-purpose S3 browser.
 
 - Independent concurrent watchers for precise `s3://bucket/prefix/` targets
 - Date-templated targets such as `s3://bucket/trades/{yyyy}{MM}{dd}/` for
-  partitioned feeds
+  partitioned feeds, resolved in the feed's own time zone
 - Configurable polling with a conservative 30-second default
 - Rolling mean, median, p95, largest-gap, and current-gap statistics
 - Billable S3 request counts per feed, with an optional cost estimate
