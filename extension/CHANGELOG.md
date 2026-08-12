@@ -22,6 +22,12 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
   it, so the Extension Development Host runs current code with no settings to
   configure.
 
+- Size-anomaly detection: an arrival that is empty, or far smaller or larger
+  than the feed's recent norm, is reported alongside timing health. Judged from
+  sizes already held in history, so it costs no extra S3 requests.
+- Feed health now carries `severity`, `sizeStatus`, `lateSince` and
+  `overdueSeconds`, and is reported on `watch.status` as well as on statistics.
+
 ### Changed
 
 - Row actions in the object grid are compact icon buttons instead of text

@@ -27,6 +27,7 @@ export interface WatchStatus {
   readonly lastPollAt?: string;
   readonly objectCount?: number;
   readonly requestCounts?: RequestCounts;
+  readonly health?: FeedHealth;
   readonly error?: string;
 }
 
@@ -44,6 +45,27 @@ export interface HistorySample {
   readonly key: string;
   readonly lastModified: string;
   readonly intervalSeconds?: number;
+}
+
+export type SizeStatus = 'unknown' | 'normal' | 'empty' | 'small' | 'large';
+export type HealthSeverity = 'unknown' | 'ok' | 'warning' | 'critical';
+export type FeedHealthStatus = 'unknown' | 'healthy' | 'late';
+
+/** The backend's health verdict for one feed. Never derived in TypeScript. */
+export interface FeedHealth {
+  readonly status: FeedHealthStatus;
+  readonly severity: HealthSeverity;
+  readonly sizeStatus: SizeStatus;
+  readonly expectedIntervalSeconds?: number;
+  readonly lateAfterSeconds?: number;
+  readonly currentGapSeconds?: number;
+  readonly overdueSeconds?: number;
+  /**
+   * The instant this lateness episode began. Stable for its whole duration and
+   * across backend restarts, which makes it the identity an alert is
+   * de-duplicated on.
+   */
+  readonly lateSince?: string;
 }
 
 export interface FrequencyStatistics {

@@ -12,9 +12,11 @@ pub use error::{ConfigError, StoreError, StoreErrorKind, UriParseError, WatcherE
 pub use history::RollingHistory;
 pub use model::{
     ArrivalInterval, ArrivalStatistics, AwsS3Options, CadenceSource, DownloadProgress,
-    DownloadRequest, DownloadResult, FeedHealth, FeedHealthStatus, HistorySnapshot, HistoryUpdate,
-    ObjectChange, ObjectChangeKind, PollResult, RequestCounts, S3Object, WatcherConfig,
-    WatcherEvent, DEFAULT_HISTORY_CAPACITY, DEFAULT_LATE_MULTIPLIER, DEFAULT_POLL_INTERVAL_SECONDS,
+    DownloadRequest, DownloadResult, FeedHealth, FeedHealthStatus, HealthSeverity, HistorySnapshot,
+    HistoryUpdate, ObjectChange, ObjectChangeKind, PollResult, RequestCounts, S3Object, SizeStatus,
+    WatcherConfig, WatcherEvent, DEFAULT_HISTORY_CAPACITY, DEFAULT_LATE_MULTIPLIER,
+    DEFAULT_POLL_INTERVAL_SECONDS, MIN_SIZE_OBSERVATIONS, MIN_SIZE_RELATIVE_SCALE,
+    SIZE_OUTLIER_SCORE,
 };
 pub use store::{AwsS3Store, ObjectStore};
 pub use uri::S3Uri;

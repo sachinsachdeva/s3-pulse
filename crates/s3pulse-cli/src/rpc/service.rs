@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
-use s3pulse_core::RequestCounts;
+use s3pulse_core::{FeedHealth, RequestCounts};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -151,6 +151,12 @@ pub struct WatcherStatus {
     pub status: WatchState,
     pub object_count: usize,
     pub request_counts: RequestCounts,
+    /// Present once the watcher has completed a poll. Carried here as well as
+    /// on statistics so a client can answer "worst health across all feeds"
+    /// with one request, and so health reaches clients that are not subscribed
+    /// to a particular watcher's statistics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<FeedHealth>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_poll_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

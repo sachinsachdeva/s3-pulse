@@ -141,15 +141,48 @@ pub enum CadenceSource {
     Learned,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FeedHealthStatus {
+    #[default]
     Unknown,
     Healthy,
     Late,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+/// How an arrival's size compares with the feed's recent norm.
+///
+/// A second, orthogonal axis to [`FeedHealthStatus`]: a feed can arrive exactly
+/// on time and still be broken. Kept separate so timing health keeps its
+/// existing meaning for clients.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SizeStatus {
+    /// Too few observations to judge, or no reference size.
+    #[default]
+    Unknown,
+    Normal,
+    /// Zero bytes where the feed normally carries content.
+    Empty,
+    Small,
+    Large,
+}
+
+/// One rollup across both health axes, so every frontend ranks feeds the same
+/// way instead of each inventing its own precedence.
+///
+/// Ordered worst-last, so the worst feed in a set is `max()`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HealthSeverity {
+    #[default]
+    Unknown,
+    Ok,
+    Warning,
+    Critical,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedHealth {
     pub status: FeedHealthStatus,
@@ -161,19 +194,28 @@ pub struct FeedHealth {
     pub late_after_seconds: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_gap_seconds: Option<f64>,
+    /// The instant the feed became late: `lastArrival + lateAfterSeconds`.
+    ///
+    /// Present only while late. This is a pure derivation rather than recorded
+    /// state, so it is stable for the whole episode and identical after a
+    /// backend restart, which makes it usable as a durable identity for
+    /// de-duplicating alerts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub late_since: Option<DateTime<Utc>>,
+    /// How far past the lateness threshold the feed is. Present only while late.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overdue_seconds: Option<f64>,
+    #[serde(default)]
+    pub size_status: SizeStatus,
+    #[serde(default)]
+    pub severity: HealthSeverity,
 }
 
-impl Default for FeedHealth {
-    fn default() -> Self {
-        Self {
-            status: FeedHealthStatus::Unknown,
-            cadence_source: None,
-            expected_interval_seconds: None,
-            late_after_seconds: None,
-            current_gap_seconds: None,
-        }
-    }
-}
+/// Thresholds for size-outlier detection. Public so tests and docs cite one
+/// source, and so revisiting them against real feeds is a one-line change.
+pub const SIZE_OUTLIER_SCORE: f64 = 3.5;
+pub const MIN_SIZE_RELATIVE_SCALE: f64 = 0.10;
+pub const MIN_SIZE_OBSERVATIONS: usize = 8;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

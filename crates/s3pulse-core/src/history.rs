@@ -5,8 +5,9 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     ArrivalInterval, ArrivalStatistics, CadenceSource, ConfigError, FeedHealth, FeedHealthStatus,
-    HistorySnapshot, HistoryUpdate, ObjectChange, ObjectChangeKind, S3Object,
-    DEFAULT_LATE_MULTIPLIER,
+    HealthSeverity, HistorySnapshot, HistoryUpdate, ObjectChange, ObjectChangeKind, S3Object,
+    SizeStatus, DEFAULT_LATE_MULTIPLIER, MIN_SIZE_OBSERVATIONS, MIN_SIZE_RELATIVE_SCALE,
+    SIZE_OUTLIER_SCORE,
 };
 
 const MIN_INTERVALS_TO_LEARN_CADENCE: usize = 2;
@@ -276,12 +277,29 @@ fn statistics_for(
         (Some(_), Some(_)) => FeedHealthStatus::Healthy,
         _ => FeedHealthStatus::Unknown,
     };
+    // Derived rather than recorded, so it survives a backend restart unchanged
+    // and can serve as a stable identity for one lateness episode.
+    let (late_since, overdue) = match (status, last_arrival, late_after, current_gap) {
+        (FeedHealthStatus::Late, Some(last), Some(threshold), Some(gap)) => (
+            last.checked_add_signed(chrono::Duration::milliseconds((threshold * 1_000.0) as i64)),
+            Some(gap - threshold),
+        ),
+        _ => (None, None),
+    };
+
+    let size_status = classify_newest_size(&objects);
+    let severity = severity_of(status, size_status);
+
     let health = FeedHealth {
         status,
         cadence_source: source,
         expected_interval_seconds: expected,
         late_after_seconds: late_after,
         current_gap_seconds: current_gap,
+        late_since,
+        overdue_seconds: overdue,
+        size_status,
+        severity,
     };
 
     ArrivalStatistics {
@@ -319,6 +337,111 @@ fn percentile_nearest_rank(sorted: &[f64], percentile: f64) -> Option<f64> {
     }
     let rank = (percentile * sorted.len() as f64).ceil() as usize;
     Some(sorted[rank.saturating_sub(1).min(sorted.len() - 1)])
+}
+
+/// Classifies the newest arrival's size against the feed's recent norm.
+///
+/// Uses a median and a double median absolute deviation rather than a mean and
+/// standard deviation: a handful of objects, or one wildly atypical file, skews
+/// mean/SD badly enough to hide the very outlier being looked for. Separate
+/// scales above and below the median keep a feed that is occasionally large but
+/// never small from masking a small-file failure.
+fn classify_newest_size(objects: &[&S3Object]) -> SizeStatus {
+    let newest = match objects
+        .iter()
+        .max_by(|left, right| left.last_modified.cmp(&right.last_modified))
+    {
+        Some(object) => object,
+        None => return SizeStatus::Unknown,
+    };
+
+    let mut sizes: Vec<f64> = objects.iter().map(|object| object.size as f64).collect();
+    sizes.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let median = match median_of_sorted(&sizes) {
+        Some(value) => value,
+        None => return SizeStatus::Unknown,
+    };
+
+    // A feed of marker files is legitimately all zeroes; only an empty object in
+    // a feed that normally carries content is a failure.
+    if newest.size == 0 {
+        return if median > 0.0 && sizes.len() >= 2 {
+            SizeStatus::Empty
+        } else {
+            SizeStatus::Normal
+        };
+    }
+    if sizes.len() < MIN_SIZE_OBSERVATIONS || median <= 0.0 {
+        return SizeStatus::Unknown;
+    }
+
+    let mut below: Vec<f64> = sizes
+        .iter()
+        .filter(|value| **value <= median)
+        .map(|value| median - value)
+        .collect();
+    let mut above: Vec<f64> = sizes
+        .iter()
+        .filter(|value| **value >= median)
+        .map(|value| value - median)
+        .collect();
+    below.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    above.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+
+    // 1.4826 rescales a MAD to be comparable with a standard deviation for
+    // normally distributed data. The relative floor stops an extremely
+    // consistent feed from calling a trivial wobble an outlier.
+    let floor = median * MIN_SIZE_RELATIVE_SCALE;
+    let lower_scale = (median_of_sorted(&below).unwrap_or(0.0) * 1.4826).max(floor);
+    let upper_scale = (median_of_sorted(&above).unwrap_or(0.0) * 1.4826).max(floor);
+
+    let size = newest.size as f64;
+    let scale = if size < median {
+        lower_scale
+    } else {
+        upper_scale
+    };
+    if scale <= 0.0 {
+        return SizeStatus::Normal;
+    }
+    let score = (size - median) / scale;
+    if score <= -SIZE_OUTLIER_SCORE {
+        SizeStatus::Small
+    } else if score >= SIZE_OUTLIER_SCORE {
+        SizeStatus::Large
+    } else {
+        SizeStatus::Normal
+    }
+}
+
+fn median_of_sorted(sorted: &[f64]) -> Option<f64> {
+    match sorted.len() {
+        0 => None,
+        length if length % 2 == 1 => sorted.get(length / 2).copied(),
+        length => {
+            let low = sorted.get(length / 2 - 1)?;
+            let high = sorted.get(length / 2)?;
+            Some((low + high) / 2.0)
+        }
+    }
+}
+
+/// Worst of the two axes, so a frontend has one number to rank feeds by.
+fn severity_of(status: FeedHealthStatus, size: SizeStatus) -> HealthSeverity {
+    let timing = match status {
+        FeedHealthStatus::Unknown => HealthSeverity::Unknown,
+        FeedHealthStatus::Healthy => HealthSeverity::Ok,
+        FeedHealthStatus::Late => HealthSeverity::Warning,
+    };
+    // A large file is suspicious; an empty one where content is expected is a
+    // broken delivery, so it outranks lateness.
+    let by_size = match size {
+        SizeStatus::Unknown => HealthSeverity::Unknown,
+        SizeStatus::Normal => HealthSeverity::Ok,
+        SizeStatus::Large | SizeStatus::Small => HealthSeverity::Warning,
+        SizeStatus::Empty => HealthSeverity::Critical,
+    };
+    timing.max(by_size)
 }
 
 #[cfg(test)]
@@ -489,5 +612,117 @@ mod tests {
         assert_eq!(stats.current_gap_seconds, None);
         assert_eq!(stats.health.status, FeedHealthStatus::Unknown);
         assert!(history.snapshot_at(at(10), None).objects.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+
+    fn at(seconds: i64) -> DateTime<Utc> {
+        chrono::TimeZone::timestamp_opt(&Utc, 1_700_000_000 + seconds, 0)
+            .single()
+            .unwrap()
+    }
+
+    fn sized(index: usize, size: u64) -> S3Object {
+        S3Object {
+            key: format!("feed/object-{index:04}"),
+            last_modified: at(index as i64 * 60),
+            size,
+            etag: None,
+            storage_class: None,
+        }
+    }
+
+    /// Builds a run of steady objects and appends one final arrival, which is
+    /// the one the classifier judges.
+    fn classify(steady: &[u64], newest: u64) -> SizeStatus {
+        let mut objects: Vec<S3Object> = steady
+            .iter()
+            .enumerate()
+            .map(|(index, size)| sized(index, *size))
+            .collect();
+        objects.push(sized(steady.len(), newest));
+        let refs: Vec<&S3Object> = objects.iter().collect();
+        classify_newest_size(&refs)
+    }
+
+    const STEADY: [u64; 9] = [1000, 1010, 990, 1005, 995, 1000, 1002, 998, 1001];
+
+    #[test]
+    fn a_typical_arrival_in_a_steady_feed_is_normal() {
+        assert_eq!(classify(&STEADY, 1003), SizeStatus::Normal);
+    }
+
+    #[test]
+    fn a_truncated_arrival_is_small_and_an_inflated_one_is_large() {
+        assert_eq!(classify(&STEADY, 100), SizeStatus::Small);
+        assert_eq!(classify(&STEADY, 50_000), SizeStatus::Large);
+    }
+
+    #[test]
+    fn a_relative_floor_keeps_a_very_consistent_feed_from_crying_outlier() {
+        // Identical sizes give a MAD of zero; without the floor every arrival
+        // that differs by a single byte would score infinitely far out.
+        let identical = [1000_u64; 9];
+        assert_eq!(classify(&identical, 1001), SizeStatus::Normal);
+        assert_eq!(classify(&identical, 1050), SizeStatus::Normal);
+        // Still catches a genuine collapse.
+        assert_eq!(classify(&identical, 10), SizeStatus::Small);
+    }
+
+    #[test]
+    fn an_empty_object_is_flagged_immediately_without_waiting_for_a_sample() {
+        // Two observations is enough; waiting for eight would miss the first
+        // broken delivery, which is the one worth catching.
+        assert_eq!(classify(&[1000], 0), SizeStatus::Empty);
+        assert_eq!(classify(&STEADY, 0), SizeStatus::Empty);
+    }
+
+    #[test]
+    fn a_feed_of_marker_files_is_not_an_endless_alarm() {
+        // _SUCCESS and touch files are legitimately zero bytes; a zero among
+        // zeroes is the norm, not a failure.
+        assert_eq!(classify(&[0, 0, 0, 0], 0), SizeStatus::Normal);
+    }
+
+    #[test]
+    fn too_few_observations_withholds_judgement_rather_than_guessing() {
+        assert_eq!(classify(&[1000, 1000, 1000], 5), SizeStatus::Unknown);
+        assert_eq!(classify(&[], 1000), SizeStatus::Unknown);
+    }
+
+    #[test]
+    fn a_feed_with_legitimately_variable_sizes_does_not_false_alarm() {
+        // Sizes spanning an order of magnitude: a value inside that spread must
+        // not be called an outlier.
+        let variable = [100_u64, 400, 900, 1500, 2200, 3000, 4100, 5000, 6000];
+        assert_eq!(classify(&variable, 3500), SizeStatus::Normal);
+        assert_eq!(classify(&variable, 800), SizeStatus::Normal);
+    }
+
+    #[test]
+    fn severity_takes_the_worse_of_the_two_axes() {
+        assert_eq!(
+            severity_of(FeedHealthStatus::Healthy, SizeStatus::Normal),
+            HealthSeverity::Ok
+        );
+        // On time but empty is still broken, and outranks mere lateness.
+        assert_eq!(
+            severity_of(FeedHealthStatus::Healthy, SizeStatus::Empty),
+            HealthSeverity::Critical
+        );
+        assert_eq!(
+            severity_of(FeedHealthStatus::Late, SizeStatus::Normal),
+            HealthSeverity::Warning
+        );
+        assert_eq!(
+            severity_of(FeedHealthStatus::Late, SizeStatus::Empty),
+            HealthSeverity::Critical
+        );
+        // Ordering is what lets a frontend rank feeds with max().
+        assert!(HealthSeverity::Critical > HealthSeverity::Warning);
+        assert!(HealthSeverity::Warning > HealthSeverity::Ok);
     }
 }

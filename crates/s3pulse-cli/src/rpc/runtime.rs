@@ -298,12 +298,18 @@ where
         let mut watchers = Vec::with_capacity(sessions.len());
         for session in sessions {
             let status = session.status.read().await;
-            let object_count = session
-                .snapshot
-                .read()
-                .await
-                .as_ref()
-                .map_or(0, |snapshot| snapshot.objects.len());
+            let (object_count, health) =
+                session
+                    .snapshot
+                    .read()
+                    .await
+                    .as_ref()
+                    .map_or((0, None), |snapshot| {
+                        (
+                            snapshot.objects.len(),
+                            Some(snapshot.statistics.health.clone()),
+                        )
+                    });
             watchers.push(WatcherStatus {
                 watcher_id: session.id.clone(),
                 name: session.name.clone(),
@@ -311,6 +317,7 @@ where
                 status: status.state,
                 object_count,
                 request_counts: session.store.request_counts(),
+                health,
                 last_poll_at: status.last_poll_at.map(|value| value.to_rfc3339()),
                 error: status.error.clone(),
             });

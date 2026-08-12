@@ -39,6 +39,35 @@ Objects are represented as:
 }
 ```
 
+Feed health is reported as:
+
+```json
+{
+  "status": "late",
+  "severity": "warning",
+  "sizeStatus": "normal",
+  "cadenceSource": "configured",
+  "expectedIntervalSeconds": 900,
+  "lateAfterSeconds": 1350,
+  "currentGapSeconds": 4911,
+  "overdueSeconds": 3561,
+  "lateSince": "2026-08-12T03:31:41Z"
+}
+```
+
+`status` covers timing only. `sizeStatus` is a second, independent axis —
+`unknown`, `normal`, `empty`, `small` or `large` — because a feed can arrive
+exactly on time and still be broken; it is judged from the sizes already held in
+history, at no extra request cost. `severity` (`unknown`, `ok`, `warning`,
+`critical`) is the worst of the two, so every frontend ranks feeds identically.
+
+`lateSince` is `lastArrival + lateAfterSeconds` and appears only while late.
+Being derived rather than recorded, it does not move during an outage and is
+recomputed identically after a backend restart, so clients may use it as a
+durable identity for one lateness episode — for example to alert once per outage
+rather than once per poll. Clients must tolerate unknown values in any of these
+enumerations.
+
 Durations in structured responses are numeric seconds. Timestamps are RFC 3339
 UTC strings. Optional values are either omitted or `null`; clients must accept
 both during protocol evolution.
@@ -91,8 +120,10 @@ Result: `{"watcherId":"production-trades","status":"stopped"}`.
 
 Parameters may contain `watcherId`; omitting it returns all watchers. Result
 contains a `watchers` array whose entries include `watcherId`, `name`, `target`,
-`status`, optional `lastPollAt`, `objectCount`, `requestCounts`, and optional
-`error`.
+`status`, optional `lastPollAt`, `objectCount`, `requestCounts`, optional
+`health`, and optional `error`. `health` appears once the watcher has completed
+a poll and has the same shape as the `health` object inside statistics, so a
+client can rank every feed from one request.
 
 ### `objects.list`
 

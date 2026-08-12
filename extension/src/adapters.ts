@@ -1,5 +1,9 @@
 import type {
   CostModel,
+  FeedHealth,
+  FeedHealthStatus,
+  HealthSeverity,
+  SizeStatus,
   DownloadProgress,
   FrequencyStatistics,
   HistorySample,
@@ -82,6 +86,48 @@ export function downloadFileName(key: string): string {
   const base = key.replace(/\/+$/, '').split('/').pop() ?? '';
   const safe = base.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 240);
   return safe && safe !== '.' && safe !== '..' ? safe : 's3-object';
+}
+
+const SIZE_STATUSES: readonly SizeStatus[] = ['unknown', 'normal', 'empty', 'small', 'large'];
+const SEVERITIES: readonly HealthSeverity[] = ['unknown', 'ok', 'warning', 'critical'];
+const HEALTH_STATUSES: readonly FeedHealthStatus[] = ['unknown', 'healthy', 'late'];
+
+/**
+ * Reads the backend's health verdict. Unknown values from a newer backend
+ * degrade to 'unknown' rather than being guessed at, and nothing here invents a
+ * verdict the backend did not give.
+ */
+export function normalizeHealth(value: unknown): FeedHealth | undefined {
+  const source = record(envelope(value, 'health'));
+  if (!source) {
+    return undefined;
+  }
+  const status = stringAt(source, 'status');
+  if (status === undefined) {
+    return undefined;
+  }
+  const oneOf = <T extends string>(allowed: readonly T[], raw: string | undefined, fallback: T): T =>
+    allowed.includes(raw as T) ? (raw as T) : fallback;
+  return {
+    status: oneOf(HEALTH_STATUSES, status, 'unknown'),
+    severity: oneOf(SEVERITIES, stringAt(source, 'severity'), 'unknown'),
+    sizeStatus: oneOf(SIZE_STATUSES, stringAt(source, 'sizeStatus', 'size_status'), 'unknown'),
+    expectedIntervalSeconds: numberAt(source, 'expectedIntervalSeconds', 'expected_interval_seconds'),
+    lateAfterSeconds: numberAt(source, 'lateAfterSeconds', 'late_after_seconds'),
+    currentGapSeconds: numberAt(source, 'currentGapSeconds', 'current_gap_seconds'),
+    overdueSeconds: numberAt(source, 'overdueSeconds', 'overdue_seconds'),
+    lateSince: stringAt(source, 'lateSince', 'late_since')
+  };
+}
+
+const SEVERITY_ORDER: Record<HealthSeverity, number> = { unknown: 0, ok: 1, warning: 2, critical: 3 };
+
+/** The worst severity in a set, for a single roll-up indicator. */
+export function worstSeverity(values: readonly HealthSeverity[]): HealthSeverity {
+  return values.reduce<HealthSeverity>(
+    (worst, value) => (SEVERITY_ORDER[value] > SEVERITY_ORDER[worst] ? value : worst),
+    'unknown'
+  );
 }
 
 export function normalizeRequestCounts(value: unknown): RequestCounts | undefined {
@@ -253,6 +299,7 @@ export function normalizeWatchStatus(value: unknown, fallbackId: string): WatchS
     lastPollAt: stringAt(source, 'lastPollAt', 'last_poll_at'),
     objectCount: numberAt(source, 'objectCount', 'object_count'),
     requestCounts: normalizeRequestCounts(valueAt(source, 'requestCounts', 'request_counts')),
+    health: normalizeHealth(valueAt(source, 'health')),
     error
   };
 }
