@@ -115,7 +115,28 @@ npm --prefix extension run package -- --target darwin-arm64
 ```
 
 `stage-backend` takes `--target` and `--from` so CI can place a binary built
-elsewhere. Staging more than one backend would ship every platform's binary in
+elsewhere.
+
+### Publishing to the Marketplace
+
+Publishing is deliberately awkward to do by accident: the release workflow only
+publishes when a run explicitly asks for it, and the job fails fast if the token
+is absent or any platform's VSIX is missing.
+
+One-time setup:
+
+1. Create a publisher at <https://marketplace.visualstudio.com/manage>. It must
+   match the `publisher` field in `extension/package.json`.
+2. Create an Azure DevOps personal access token with **Marketplace > Manage**
+   scope, for **All accessible organizations**.
+3. Add it as the repository secret `VSCE_PAT`, under the `marketplace`
+   environment so the approval can be gated.
+
+To publish, bump the version in `extension/package.json` and `Cargo.toml`
+together, move the changelog's `[Unreleased]` section under that version, tag,
+and then run the workflow with **Publish to the VS Code Marketplace** ticked.
+All six VSIXes are published in one call so the Marketplace treats them as a
+single version with per-platform downloads. Staging more than one backend would ship every platform's binary in
 every VSIX, so the packaging step runs against a clean `bin/` directory.
 
 ## AWS access

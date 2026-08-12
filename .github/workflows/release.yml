@@ -25,6 +25,10 @@ on:
         description: 'Attach the VSIXes to a GitHub release'
         type: boolean
         default: false
+      publish:
+        description: 'Publish to the VS Code Marketplace (requires the VSCE_PAT secret)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -219,3 +223,64 @@ jobs:
             --title "$TAG" \
             --notes "Built from ${{ github.sha }}. Targets: ${{ needs.plan.outputs.targets }}" \
             --draft
+
+  publish:
+    name: publish to the Marketplace
+    needs: [plan, package]
+    # Never publishes by accident: a tag alone is not enough, the run has to ask
+    # for it, and the job no-ops without a token.
+    if: inputs.publish
+    runs-on: ubuntu-22.04
+    environment: marketplace
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - run: npm ci
+        working-directory: extension
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Check the token is present
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT is not set. Create an Azure DevOps token with Marketplace > Manage scope and add it as a repository secret."
+            exit 1
+          fi
+
+      # Every platform build must be present. Publishing a subset would leave
+      # the Marketplace offering this version to some platforms and not others.
+      - name: Require a VSIX for every target
+        env:
+          TARGETS: ${{ needs.plan.outputs.targets }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const targets = JSON.parse(process.env.TARGETS);
+            const files = fs.readdirSync("artifacts").filter((f) => f.endsWith(".vsix"));
+            const missing = targets.filter((t) => !files.some((f) => f.includes(t)));
+            if (missing.length) {
+              console.error(`::error::No VSIX for: ${missing.join(", ")}`);
+              process.exit(1);
+            }
+            console.log(`${files.length} VSIX files for ${targets.length} targets`);
+          '
+
+      # One invocation with every package, so the Marketplace treats them as a
+      # single version with per-platform downloads rather than separate releases.
+      - name: Publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --no-install vsce publish --packagePath $(ls "$GITHUB_WORKSPACE"/artifacts/*.vsix | tr '\n' ' ')
+        working-directory: extension
