@@ -2,8 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use s3pulse_core::{
-    AwsS3Options, AwsS3Store, DownloadRequest, ObjectChangeKind, ObjectStore, PollingWatcher,
-    S3Object, S3Uri, WatcherConfig,
+    AwsS3Options, AwsS3Store, DateTemplate, DownloadRequest, ObjectChangeKind, ObjectStore,
+    PollingWatcher, S3Object, S3Uri, WatcherConfig,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -57,6 +57,39 @@ fn parse_target(target: &str) -> Result<S3Uri, AppError> {
     target.parse().map_err(message)
 }
 
+/// Resolves date placeholders, if any, to the concrete prefixes to read.
+fn resolve_targets(target: &S3Uri, lookback: u32) -> Result<Vec<S3Uri>, AppError> {
+    match DateTemplate::parse(&target.prefix).map_err(message)? {
+        None => Ok(vec![target.clone()]),
+        Some(template) => Ok(template
+            .resolve(Utc::now(), lookback)
+            .into_iter()
+            .map(|prefix| S3Uri {
+                bucket: target.bucket.clone(),
+                prefix,
+            })
+            .collect()),
+    }
+}
+
+async fn list_resolved(
+    store: &Arc<dyn ObjectStore>,
+    target: &S3Uri,
+    lookback: u32,
+    limit: usize,
+) -> Result<Vec<S3Object>, AppError> {
+    let mut objects = Vec::new();
+    for resolved in resolve_targets(target, lookback)? {
+        objects.extend(
+            store
+                .list_objects(&resolved, limit)
+                .await
+                .map_err(message)?,
+        );
+    }
+    Ok(objects)
+}
+
 async fn list(
     args: QueryArgs,
     profile: Option<String>,
@@ -65,10 +98,7 @@ async fn list(
 ) -> Result<(), AppError> {
     let target = parse_target(&args.target)?;
     let store = create_store(profile, region).await?;
-    let mut objects = store
-        .list_objects(&target, args.limit)
-        .await
-        .map_err(message)?;
+    let mut objects = list_resolved(&store, &target, args.lookback, args.limit).await?;
     sort_recent(&mut objects);
     objects.truncate(args.limit);
     if json_output {
@@ -91,10 +121,7 @@ async fn history(
     let cutoff = Utc::now()
         - chrono::Duration::from_std(args.last)
             .map_err(|error| AppError::Message(error.to_string()))?;
-    let mut objects = store
-        .list_objects(&target, args.limit)
-        .await
-        .map_err(message)?;
+    let mut objects = list_resolved(&store, &target, args.lookback, args.limit).await?;
     objects.retain(|object| object.last_modified >= cutoff);
     sort_recent(&mut objects);
     objects.truncate(args.limit);
@@ -134,6 +161,7 @@ async fn stats(
         poll_interval_seconds: 30,
         expected_interval_seconds: None,
         max_history: args.limit,
+        lookback_periods: args.lookback,
     };
     let mut watcher = PollingWatcher::new(config, store).map_err(message)?;
     let statistics = watcher
@@ -168,6 +196,7 @@ async fn watch(
         poll_interval_seconds: args.interval.as_secs(),
         expected_interval_seconds: args.expected_interval.map(|value| value.as_secs()),
         max_history: args.history_limit,
+        lookback_periods: args.lookback,
     };
     let mut watcher = PollingWatcher::new(config, store).map_err(message)?;
     let mut previous_arrival = None;

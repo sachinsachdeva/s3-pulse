@@ -33,6 +33,17 @@ pub struct WatcherConfig {
     pub expected_interval_seconds: Option<u64>,
     #[serde(default = "default_history_capacity")]
     pub max_history: usize,
+    /// Earlier periods to also watch when the target carries date placeholders.
+    ///
+    /// A rollover is not clean — files for yesterday can still land after
+    /// midnight — and this doubles as slack for a feed partitioned in a zone
+    /// other than UTC. Ignored for a target without placeholders.
+    #[serde(default = "default_lookback_periods")]
+    pub lookback_periods: u32,
+}
+
+fn default_lookback_periods() -> u32 {
+    1
 }
 
 impl WatcherConfig {
@@ -46,6 +57,7 @@ impl WatcherConfig {
             poll_interval_seconds: DEFAULT_POLL_INTERVAL_SECONDS,
             expected_interval_seconds: None,
             max_history: DEFAULT_HISTORY_CAPACITY,
+            lookback_periods: default_lookback_periods(),
         }
     }
 

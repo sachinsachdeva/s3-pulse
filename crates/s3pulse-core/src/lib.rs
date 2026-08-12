@@ -5,10 +5,13 @@ mod error;
 mod history;
 mod model;
 mod store;
+mod template;
 mod uri;
 mod watcher;
 
-pub use error::{ConfigError, StoreError, StoreErrorKind, UriParseError, WatcherError};
+pub use error::{
+    ConfigError, StoreError, StoreErrorKind, TemplateError, UriParseError, WatcherError,
+};
 pub use history::RollingHistory;
 pub use model::{
     ArrivalInterval, ArrivalStatistics, AwsS3Options, CadenceSource, DownloadProgress,
@@ -19,5 +22,6 @@ pub use model::{
     SIZE_OUTLIER_SCORE,
 };
 pub use store::{AwsS3Store, ObjectStore};
+pub use template::{DateTemplate, Granularity};
 pub use uri::S3Uri;
 pub use watcher::{PollingWatcher, SharedHistory};

@@ -23,6 +23,23 @@ A watcher definition uses camel-case JSON fields:
 }
 ```
 
+`target` may carry date placeholders, in which case `lookbackPeriods` (default
+`1`) says how many earlier periods to watch alongside the current one:
+
+```json
+{"target": "s3://prod-data/trades/{yyyy}{MM}{dd}/", "lookbackPeriods": 1}
+```
+
+Recognised placeholders are `{yyyy}` `{yy}` `{MM}` `{M}` `{dd}` `{d}` `{HH}`
+`{H}`; `{{` and `}}` are literal braces. The period is the finest placeholder
+present, so the example above resolves daily. **Placeholders resolve in UTC**,
+and the lookback exists because a rollover is not clean — files for the previous
+period can still arrive — and doubles as slack for a feed partitioned in another
+zone. Each resolved prefix is listed separately and therefore billed separately,
+so `lookbackPeriods: 1` costs twice `0`. An unusable placeholder is rejected
+when the watcher starts rather than silently watching a prefix nothing writes
+to.
+
 Only `target` is required. The server generates an ID and derives a name when
 they are not
 provided. `profile`, `region`, and `expectedIntervalSeconds` may be omitted.

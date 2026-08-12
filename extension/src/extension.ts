@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import { errorMessage, formatCost, normalizeTarget, normalizeWatchStatuses, projectedMonthlyCost } from './adapters';
+import {
+  errorMessage,
+  formatCost,
+  hasDateTemplate,
+  normalizeTarget,
+  normalizeWatchStatuses,
+  projectedMonthlyCost,
+  templateProblem
+} from './adapters';
 import { AlertController } from './alerts';
 import { BackendService, discoverBackendPath } from './backend';
 import { costModel, DashboardManager } from './dashboard';
@@ -194,11 +202,18 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
   const title = existing ? 'Edit S3 Pulse Feed' : 'Add S3 Pulse Feed';
   const targetInput = await vscode.window.showInputBox({
     title: `${title} (1/6)`,
-    prompt: 'S3 bucket and prefix to monitor',
-    placeHolder: 's3://prod-data/trades/daily/',
+    prompt: 'S3 bucket and prefix to monitor. Date placeholders are allowed, for example s3://bucket/trades/{yyyy}{MM}{dd}/',
+    placeHolder: 's3://prod-data/trades/{yyyy}{MM}{dd}/',
     value: existing?.target,
     ignoreFocusOut: true,
-    validateInput: (value) => normalizeTarget(value) ? undefined : 'Enter an S3 URI such as s3://bucket/prefix/'
+    validateInput: (value) => {
+      if (!normalizeTarget(value)) {
+        return 'Enter an S3 URI such as s3://bucket/prefix/';
+      }
+      // A wrong placeholder resolves to a prefix nothing writes to, which looks
+      // exactly like a dead feed, so it has to be caught here.
+      return templateProblem(value);
+    }
   });
   if (targetInput === undefined) {
     return undefined;
@@ -294,6 +309,27 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
     return undefined;
   }
 
+  let lookbackPeriods = existing?.lookbackPeriods ?? 1;
+  if (hasDateTemplate(target)) {
+    const chosen = await vscode.window.showQuickPick(
+      [
+        { label: 'Current period and the one before', description: 'Recommended — covers files still landing after a rollover', periods: 1 },
+        { label: 'Current period only', description: 'Cheapest, but misses late arrivals for the previous period', periods: 0 },
+        { label: 'Current period and the two before', periods: 2 },
+        { label: 'Current period and the six before', periods: 6 }
+      ],
+      {
+        title: `${title} — date template`,
+        placeHolder: 'How many earlier periods to watch as well? Each one costs its own LIST requests.',
+        ignoreFocusOut: true
+      }
+    );
+    if (!chosen) {
+      return undefined;
+    }
+    lookbackPeriods = chosen.periods;
+  }
+
   const historyLimit = vscode.workspace.getConfiguration('s3Pulse').get<number>('historyLimit', 1_000);
   return {
     id: existing?.id ?? randomUUID(),
@@ -304,7 +340,8 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
     pollIntervalSeconds: selectedInterval.seconds,
     expectedIntervalSeconds: expectedInput.trim() ? Number(expectedInput) : undefined,
     historyLimit: Number.isInteger(historyLimit) ? Math.min(1_000, Math.max(100, historyLimit)) : 1_000,
-    bucketMinutes: selectedBucket.minutes
+    bucketMinutes: selectedBucket.minutes,
+    lookbackPeriods
   };
 }
 

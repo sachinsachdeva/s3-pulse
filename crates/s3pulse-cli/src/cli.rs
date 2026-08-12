@@ -66,6 +66,11 @@ pub struct WatchArgs {
         value_parser = parse_history_limit
     )]
     pub history_limit: usize,
+
+    /// Earlier periods to also read when the target uses date placeholders such
+    /// as {yyyy}/{MM}/{dd}/. Covers files still landing after a rollover.
+    #[arg(long, default_value_t = 1)]
+    pub lookback: u32,
 }
 
 #[derive(Debug, Args)]
@@ -84,6 +89,11 @@ pub struct HistoryArgs {
         value_parser = parse_history_limit
     )]
     pub limit: usize,
+
+    /// Earlier periods to also read when the target uses date placeholders such
+    /// as {yyyy}/{MM}/{dd}/. Covers files still landing after a rollover.
+    #[arg(long, default_value_t = 1)]
+    pub lookback: u32,
 }
 
 #[derive(Debug, Args)]
@@ -98,6 +108,11 @@ pub struct QueryArgs {
         value_parser = parse_history_limit
     )]
     pub limit: usize,
+
+    /// Earlier periods to also read when the target uses date placeholders such
+    /// as {yyyy}/{MM}/{dd}/. Covers files still landing after a rollover.
+    #[arg(long, default_value_t = 1)]
+    pub lookback: u32,
 }
 
 #[derive(Debug, Args)]

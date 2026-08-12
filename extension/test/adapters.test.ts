@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   downloadFileName,
+  hasDateTemplate,
+  templateProblem,
   estimateCost,
   formatCost,
   normalizeRequestCounts,
@@ -132,4 +134,26 @@ test('formats estimates without collapsing small amounts to zero', () => {
   assert.equal(formatCost(1234.5, 'USD'), '$1235');
   assert.equal(formatCost(2.5, 'EUR'), '2.50 EUR', 'unknown currencies are labelled, not symbolised');
   assert.equal(formatCost(undefined, 'USD'), undefined);
+});
+
+test('date-template validation mirrors the backend grammar', () => {
+  assert.equal(templateProblem('s3://bucket/trades/{yyyy}{MM}{dd}/'), undefined);
+  assert.equal(templateProblem('s3://bucket/trades/{yyyy}/{MM}/{dd}/{HH}/'), undefined);
+  assert.equal(templateProblem('s3://bucket/trades/'), undefined, 'a plain target is fine');
+
+  // {mm} is minutes in most format languages, and silently treating it as a
+  // month yields a plausible prefix that nothing ever writes to.
+  assert.match(templateProblem('s3://bucket/{yyyy}{mm}{dd}/') ?? '', /minutes, not months/);
+  assert.match(templateProblem('s3://bucket/{year}/') ?? '', /Unknown date placeholder \{year\}/);
+  assert.match(templateProblem('s3://bucket/{yyyy/') ?? '', /missing its closing brace/);
+
+  // Escaped braces are literal, not placeholders.
+  assert.equal(templateProblem('s3://bucket/odd{{name}}/'), undefined);
+});
+
+test('template detection decides whether lookback is even relevant', () => {
+  assert.equal(hasDateTemplate('s3://bucket/trades/{yyyy}{MM}{dd}/'), true);
+  assert.equal(hasDateTemplate('s3://bucket/trades/{HH}/'), true);
+  assert.equal(hasDateTemplate('s3://bucket/trades/'), false);
+  assert.equal(hasDateTemplate('s3://bucket/odd{{name}}/'), false, 'escaped braces are not a template');
 });

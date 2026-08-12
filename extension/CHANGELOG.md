@@ -22,6 +22,10 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
   it, so the Extension Development Host runs current code with no settings to
   configure.
 
+- Date-templated targets: `s3://bucket/trades/{yyyy}{MM}{dd}/` resolves to the
+  current period at every poll, so a date-partitioned feed no longer needs a new
+  definition every day. Also watches earlier periods, one by default, because a
+  rollover is not clean. Placeholders resolve in UTC.
 - **S3 Pulse: Copy Backend (CLI) Path** command. The bundled backend is the
   complete `s3pulse` CLI, and nothing previously revealed where it lives.
 - Alerting: a status-bar indicator summarising the health of every watched feed,

@@ -37,6 +37,13 @@ pub struct WatchDefinition {
     pub expected_interval_seconds: Option<u64>,
     #[serde(default = "default_history_limit")]
     pub history_limit: usize,
+    /// Earlier periods to also watch when `target` carries date placeholders.
+    #[serde(default = "default_lookback_periods")]
+    pub lookback_periods: u32,
+}
+
+fn default_lookback_periods() -> u32 {
+    1
 }
 
 fn default_poll_interval() -> u64 {

@@ -14,6 +14,18 @@ pub enum UriParseError {
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum TemplateError {
+    #[error("unknown date placeholder {{{0}}}; use yyyy, yy, MM, M, dd, d, HH or H")]
+    UnknownPlaceholder(String),
+    #[error("{{mm}} means minutes, not months; use {{MM}} for a zero-padded month")]
+    MinutesNotMonths,
+    #[error("a date placeholder is missing its closing brace")]
+    UnclosedPlaceholder,
+    #[error("unmatched }} in the target; write }}}} for a literal brace")]
+    UnmatchedBrace,
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ConfigError {
     #[error("watcher id cannot be empty")]
     EmptyId,
@@ -174,6 +186,8 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
 pub enum WatcherError {
     #[error(transparent)]
     InvalidConfig(#[from] ConfigError),
+    #[error(transparent)]
+    InvalidTemplate(#[from] TemplateError),
     #[error("watcher event receiver was closed")]
     EventChannelClosed,
 }

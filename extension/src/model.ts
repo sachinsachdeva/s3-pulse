@@ -9,6 +9,11 @@ export interface WatcherDefinition {
   readonly historyLimit: number;
   /** Bucket width in minutes for the "files per interval" graph. */
   readonly bucketMinutes: number;
+  /**
+   * Earlier periods to also watch when the target carries date placeholders.
+   * Ignored for a plain target.
+   */
+  readonly lookbackPeriods: number;
 }
 
 /** Cumulative billable S3 requests reported by the backend for one watcher. */

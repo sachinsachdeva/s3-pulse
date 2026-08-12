@@ -1,11 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ObjectStore, PollResult, RollingHistory, StoreError, WatcherConfig, WatcherError, WatcherEvent,
+    DateTemplate, ObjectStore, PollResult, RollingHistory, S3Uri, StoreError, WatcherConfig,
+    WatcherError, WatcherEvent,
 };
 
 pub type SharedHistory = Arc<RwLock<RollingHistory>>;
@@ -19,6 +20,9 @@ pub struct PollingWatcher {
     config: WatcherConfig,
     store: Arc<dyn ObjectStore>,
     history: SharedHistory,
+    /// Parsed once at construction; `None` for an ordinary target, which then
+    /// behaves exactly as it did before templates existed.
+    template: Option<DateTemplate>,
 }
 
 impl PollingWatcher {
@@ -28,10 +32,13 @@ impl PollingWatcher {
             config.max_history,
             config.expected_interval_seconds,
         )?;
+        let template =
+            DateTemplate::parse(&config.target.prefix).map_err(WatcherError::InvalidTemplate)?;
         Ok(Self {
             config,
             store,
             history: Arc::new(RwLock::new(history)),
+            template,
         })
     }
 
@@ -43,12 +50,39 @@ impl PollingWatcher {
         Arc::clone(&self.history)
     }
 
+    /// The concrete prefixes this poll will list.
+    ///
+    /// One entry for an ordinary target; for a templated one, the current
+    /// period plus `lookback_periods` earlier ones.
+    pub fn resolve_targets(&self, at: DateTime<Utc>) -> Vec<S3Uri> {
+        match &self.template {
+            None => vec![self.config.target.clone()],
+            Some(template) => template
+                .resolve(at, self.config.lookback_periods)
+                .into_iter()
+                .map(|prefix| S3Uri {
+                    bucket: self.config.target.bucket.clone(),
+                    prefix,
+                })
+                .collect(),
+        }
+    }
+
     /// Performs one complete paginated LIST/reconcile operation.
+    ///
+    /// A templated target lists every resolved prefix and feeds them all into
+    /// the one history, which merges them because it is keyed by object key.
     pub async fn poll_once(&mut self) -> Result<PollResult, StoreError> {
-        let objects = self
-            .store
-            .list_objects(&self.config.target, self.config.max_history)
-            .await?;
+        let polled_at_start = Utc::now();
+        let targets = self.resolve_targets(polled_at_start);
+        let mut objects = Vec::new();
+        for target in &targets {
+            objects.extend(
+                self.store
+                    .list_objects(target, self.config.max_history)
+                    .await?,
+            );
+        }
         let listed_object_count = objects.len();
         let polled_at = Utc::now();
         let mut history = self.history.write().await;
@@ -210,6 +244,7 @@ mod tests {
             region: None,
             poll_interval_seconds: 30,
             expected_interval_seconds: Some(10),
+            lookback_periods: 1,
             max_history: 2,
         }
     }
@@ -259,5 +294,95 @@ mod tests {
         invalid.max_history = 0;
         let store = Arc::new(FakeStore::new(vec![]));
         assert!(PollingWatcher::new(invalid, store).is_err());
+    }
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+    use crate::{DownloadProgress, DownloadRequest, DownloadResult, S3Uri};
+
+    /// Lists nothing; these tests only exercise target resolution.
+    struct EmptyStore;
+
+    #[async_trait::async_trait]
+    impl ObjectStore for EmptyStore {
+        async fn list_objects(
+            &self,
+            _target: &S3Uri,
+            _max_objects: usize,
+        ) -> Result<Vec<crate::S3Object>, StoreError> {
+            Ok(vec![])
+        }
+
+        async fn download_object(
+            &self,
+            _request: DownloadRequest,
+            _progress: Option<tokio::sync::mpsc::Sender<DownloadProgress>>,
+            _cancellation: CancellationToken,
+        ) -> Result<DownloadResult, StoreError> {
+            unreachable!("these tests never download")
+        }
+    }
+
+    fn config(target: &str, lookback: u32) -> WatcherConfig {
+        WatcherConfig {
+            id: "feed".to_owned(),
+            name: "Feed".to_owned(),
+            target: target.parse::<S3Uri>().unwrap(),
+            profile: None,
+            region: None,
+            poll_interval_seconds: 30,
+            expected_interval_seconds: None,
+            max_history: 100,
+            lookback_periods: lookback,
+        }
+    }
+
+    fn watcher(target: &str, lookback: u32) -> PollingWatcher {
+        PollingWatcher::new(config(target, lookback), Arc::new(EmptyStore)).unwrap()
+    }
+
+    fn at(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn an_ordinary_target_resolves_to_itself_and_lists_once() {
+        let watcher = watcher("s3://bucket/trades/", 3);
+        let targets = watcher.resolve_targets(at("2026-08-12T09:00:00Z"));
+        assert_eq!(
+            targets.len(),
+            1,
+            "lookback is irrelevant without placeholders"
+        );
+        assert_eq!(targets[0].prefix, "trades/");
+        assert_eq!(targets[0].bucket, "bucket");
+    }
+
+    #[test]
+    fn a_templated_target_resolves_the_period_and_its_lookback() {
+        let watcher = watcher("s3://bucket/trades/{yyyy}{MM}{dd}/", 1);
+        let targets = watcher.resolve_targets(at("2026-08-12T00:05:00Z"));
+        let prefixes: Vec<&str> = targets.iter().map(|t| t.prefix.as_str()).collect();
+        assert_eq!(prefixes, ["trades/20260812/", "trades/20260811/"]);
+        // The bucket is never templated.
+        assert!(targets.iter().all(|target| target.bucket == "bucket"));
+    }
+
+    #[test]
+    fn a_malformed_template_is_rejected_when_the_watcher_is_built() {
+        let error = match PollingWatcher::new(
+            config("s3://bucket/trades/{mm}/", 1),
+            Arc::new(EmptyStore),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("a malformed template must not build a watcher"),
+        };
+        // Failing at construction means a typo surfaces immediately rather than
+        // as a feed that silently watches a prefix nothing writes to.
+        assert!(error.to_string().contains("minutes"), "{error}");
     }
 }

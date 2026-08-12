@@ -64,18 +64,6 @@ caller is a test. The two real loops in `app.rs` and `rpc/runtime.rs` hand-roll
 their own loop around `poll_once`, so a change made in `run` would ship
 affecting nothing.
 
-## Date-templated prefixes
-
-Let a target carry date placeholders — `s3://bucket/trades/{yyyy}/{MM}/{dd}/` —
-so a partitioned feed does not need a new definition every day.
-
-The rollover problem ("watch yesterday and today at once") collapses neatly into
-"resolve N prefixes per poll and feed them all into the one history", because
-history is keyed by object key. The costs are that LIST spend multiplies by the
-number of resolved prefixes, and that a template resolving to a prefix which
-never exists is indistinguishable from a genuinely dead feed. The time zone the
-placeholders resolve in has to be an explicit per-feed choice, never the viewer's
-locale.
 
 ## Event-driven ingestion
 

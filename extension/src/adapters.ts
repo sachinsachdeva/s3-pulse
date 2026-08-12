@@ -327,6 +327,36 @@ export function normalizeDownloadProgress(value: unknown): DownloadProgress | un
   };
 }
 
+/** Date placeholders the backend understands, for validating a target early. */
+const DATE_PLACEHOLDERS = new Set(['yyyy', 'yy', 'MM', 'M', 'dd', 'd', 'HH', 'H']);
+
+/**
+ * Reports the first unusable date placeholder in a target, or undefined when it
+ * is fine. Mirrors the backend's grammar so a typo is caught in the wizard
+ * rather than becoming a feed that silently watches a prefix nothing writes to.
+ */
+export function templateProblem(target: string): string | undefined {
+  const withoutEscapes = target.replace(/\{\{|\}\}/g, '');
+  for (const match of withoutEscapes.matchAll(/\{([^}]*)\}/g)) {
+    const name = match[1] ?? '';
+    if (DATE_PLACEHOLDERS.has(name)) {
+      continue;
+    }
+    return name === 'mm' || name === 'm'
+      ? '{mm} means minutes, not months; use {MM} for a zero-padded month'
+      : `Unknown date placeholder {${name}}; use yyyy, yy, MM, M, dd, d, HH or H`;
+  }
+  if (/\{[^}]*$/.test(withoutEscapes)) {
+    return 'A date placeholder is missing its closing brace';
+  }
+  return undefined;
+}
+
+/** Whether a target carries any date placeholder at all. */
+export function hasDateTemplate(target: string): boolean {
+  return /\{(yyyy|yy|MM|M|dd|d|HH|H)\}/.test(target.replace(/\{\{|\}\}/g, ''));
+}
+
 export function serializeWatcher(watcher: WatcherDefinition): UnknownRecord {
   return {
     id: watcher.id,
@@ -336,7 +366,8 @@ export function serializeWatcher(watcher: WatcherDefinition): UnknownRecord {
     region: watcher.region,
     pollIntervalSeconds: watcher.pollIntervalSeconds,
     expectedIntervalSeconds: watcher.expectedIntervalSeconds,
-    historyLimit: watcher.historyLimit
+    historyLimit: watcher.historyLimit,
+    lookbackPeriods: watcher.lookbackPeriods
   };
 }
 
