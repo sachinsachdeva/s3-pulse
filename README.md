@@ -18,6 +18,8 @@ than act as another general-purpose S3 browser.
 - Configurable polling with a conservative 30-second default
 - Rolling mean, median, p95, largest-gap, and current-gap statistics
 - Billable S3 request counts per feed, with an optional cost estimate
+- Status-bar health roll-up and de-duplicated alerts for late, empty, or failing
+  feeds
 - Auto-learned or explicitly configured expected cadence and feed health
 - A live VS Code graph and searchable object grid backed by the same history
 - A standalone Rust CLI and a persistent JSON-RPC backend for the extension

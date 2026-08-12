@@ -239,6 +239,50 @@
           "minimum": 1,
           "maximum": 1440,
           "description": "Bucket width in minutes offered by default when adding a feed. Each feed stores its own value."
+        },
+        "s3Pulse.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a status-bar indicator summarising the health of watched feeds."
+        },
+        "s3Pulse.alerts.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification when a watched feed needs attention. The status-bar indicator is controlled separately."
+        },
+        "s3Pulse.alerts.onLate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Alert when a feed has not delivered within its expected cadence."
+        },
+        "s3Pulse.alerts.onSizeAnomaly": {
+          "type": "boolean",
+          "default": true,
+          "description": "Alert when an object arrives empty, or far smaller or larger than the feed's recent norm."
+        },
+        "s3Pulse.alerts.onError": {
+          "type": "boolean",
+          "default": true,
+          "description": "Alert when a watcher stops with an error, such as expired credentials."
+        },
+        "s3Pulse.alerts.onRecovery": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also alert when a feed returns to normal."
+        },
+        "s3Pulse.alerts.confirmObservations": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Consecutive polls a problem must persist for before alerting. Raising this rides out brief blips at the cost of noticing later."
+        },
+        "s3Pulse.alerts.cooldownSeconds": {
+          "type": "integer",
+          "default": 900,
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Minimum time between alerts for the same feed. A single ongoing outage alerts once regardless of this."
         }
       }
     }

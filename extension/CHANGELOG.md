@@ -22,6 +22,12 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
   it, so the Extension Development Host runs current code with no settings to
   configure.
 
+- Alerting: a status-bar indicator summarising the health of every watched feed,
+  and notifications when one goes late, arrives the wrong size, or stops with an
+  error. Health is tracked whether or not a dashboard is open. A single ongoing
+  outage notifies once rather than once per poll, and a problem must persist for
+  two consecutive polls before it interrupts anyone. Controlled by the
+  `s3Pulse.alerts.*` settings and `s3Pulse.showStatusBar`.
 - Size-anomaly detection: an arrival that is empty, or far smaller or larger
   than the feed's recent norm, is reported alongside timing health. Judged from
   sizes already held in history, so it costs no extra S3 requests.

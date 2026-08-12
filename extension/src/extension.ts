@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { errorMessage, formatCost, normalizeTarget, normalizeWatchStatuses, projectedMonthlyCost } from './adapters';
+import { AlertController } from './alerts';
 import { BackendService } from './backend';
 import { costModel, DashboardManager } from './dashboard';
 import { FeedTreeItem, FeedTreeProvider } from './feedTree';
@@ -13,6 +14,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const tree = new FeedTreeProvider(store);
   const backend = new BackendService(context.extensionPath, output);
   const dashboards = new DashboardManager(backend, tree, output, store);
+  // Subscribes to the backend's notifications independently of dashboards, so
+  // a feed's health is tracked whether or not its panel is open.
+  const alerts = new AlertController(backend, store, output);
 
   context.subscriptions.push(
     output,
@@ -20,6 +24,7 @@ export function activate(context: vscode.ExtensionContext): void {
     tree,
     backend,
     dashboards,
+    alerts,
     vscode.window.registerTreeDataProvider('s3Pulse.feeds', tree),
     vscode.commands.registerCommand('s3Pulse.addFeed', async () => {
       const watcher = await feedWizard();
@@ -132,6 +137,7 @@ export function activate(context: vscode.ExtensionContext): void {
       backend.forgetActive(watcher.id);
       dashboards.close(watcher.id);
       tree.remove(watcher.id);
+      alerts.forget(watcher.id);
       await store.remove(watcher.id);
     }),
     vscode.commands.registerCommand('s3Pulse.refreshFeeds', async () => {
