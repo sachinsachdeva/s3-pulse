@@ -3,49 +3,102 @@ name: Release
 # Builds one VSIX per platform. VS Code resolves platform-specific extensions at
 # install time, so each artifact bundles exactly one native backend.
 #
-# The backend depends on aws-lc-sys, a C library that is awkward to
-# cross-compile, so every target is built on a runner of its own architecture
-# rather than with a cross toolchain.
+# Every target is built on a runner of its own architecture rather than with a
+# cross toolchain, because the backend depends on aws-lc-sys — a C library whose
+# cross-compilation is fiddly — and because a native build is the only one that
+# can be smoke-tested on the runner that produced it.
+#
+# ARM64 Linux and Windows are deliberately not built. Those runners are free for
+# public repositories but need a paid plan on private ones, and this repository
+# is private. The scripts already accept linux-arm64 and win32-arm64, so adding
+# them back is a matter of listing them here.
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Publish to the Marketplace after building'
+      targets:
+        description: 'Targets to build (JSON array). A single target is a cheap way to validate the pipeline.'
+        type: string
+        default: '["darwin-arm64","darwin-x64","linux-x64","win32-x64"]'
+      release:
+        description: 'Attach the VSIXes to a GitHub release'
         type: boolean
         default: false
 
 permissions:
   contents: read
 
+env:
+  # A tag build always covers every platform; a manual run builds what was asked
+  # for, so a cheap single-target run can validate the pipeline.
+  ALL_TARGETS: '["darwin-arm64","darwin-x64","linux-x64","win32-x64"]'
+
 jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - id: plan
+        env:
+          REQUESTED: ${{ inputs.targets }}
+        run: |
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const RUNNERS = {
+            'darwin-arm64': { runner: 'macos-14',     triple: 'aarch64-apple-darwin' },
+            'darwin-x64':   { runner: 'macos-13',     triple: 'x86_64-apple-darwin' },
+            'linux-x64':    { runner: 'ubuntu-22.04', triple: 'x86_64-unknown-linux-gnu' },
+            'win32-x64':    { runner: 'windows-2022', triple: 'x86_64-pc-windows-msvc' }
+          };
+          const all = JSON.parse(process.env.ALL_TARGETS);
+          const requested = process.env.REQUESTED ? JSON.parse(process.env.REQUESTED) : all;
+          const unknown = requested.filter((t) => !RUNNERS[t]);
+          if (unknown.length) {
+            console.error(`Unknown target(s): ${unknown.join(', ')}`);
+            process.exit(1);
+          }
+          const include = requested.map((target) => ({ target, ...RUNNERS[target] }));
+          console.log(`matrix=${JSON.stringify({ include })}`);
+          console.log(`targets=${JSON.stringify(requested)}`);
+          NODE
+
+  # Run the definition-of-done once rather than once per packaged target, which
+  # is what invoking `npm run package` in every matrix leg would do.
+  verify:
+    name: verify
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
+      - run: npm ci
+        working-directory: extension
+      - run: npm run check
+        working-directory: extension
+      - run: npm test
+        working-directory: extension
+
   backend:
-    name: ${{ matrix.target }}
+    name: backend ${{ matrix.target }}
+    needs: [plan, verify]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: darwin-arm64
-            runner: macos-14
-            triple: aarch64-apple-darwin
-          - target: darwin-x64
-            runner: macos-13
-            triple: x86_64-apple-darwin
-          - target: linux-x64
-            runner: ubuntu-22.04
-            triple: x86_64-unknown-linux-gnu
-          - target: linux-arm64
-            runner: ubuntu-22.04-arm
-            triple: aarch64-unknown-linux-gnu
-          - target: win32-x64
-            runner: windows-2022
-            triple: x86_64-pc-windows-msvc
-          - target: win32-arm64
-            runner: windows-11-arm
-            triple: aarch64-pc-windows-msvc
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -57,20 +110,21 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # aws-lc-sys builds C code: it needs cmake everywhere, and NASM for the
-      # x86_64 Windows assembly. The other runners ship a usable toolchain.
+      # aws-lc-sys compiles C and, on x86_64 Windows, assembles with NASM. The
+      # other images already carry a usable toolchain.
       - name: Install build tools (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          choco install --no-progress -y cmake nasm
-          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
-          echo "C:\Program Files\CMake\bin" >> $env:GITHUB_PATH
+          choco install --no-progress -y nasm
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Build backend
         run: cargo build --release -p s3pulse-cli --target ${{ matrix.triple }}
 
+      # Proves the artifact actually executes on the platform it targets, which
+      # a cross-compiled build could not demonstrate.
       - name: Verify the binary runs
-        if: matrix.target != 'linux-arm64' || runner.arch == 'ARM64'
         shell: bash
         run: |
           BIN="target/${{ matrix.triple }}/release/s3pulse"
@@ -86,12 +140,11 @@ jobs:
 
   package:
     name: package ${{ matrix.target }}
-    needs: backend
+    needs: [plan, backend]
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
-      matrix:
-        target: [darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64, win32-arm64]
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -109,17 +162,59 @@ jobs:
           name: backend-${{ matrix.target }}
           path: staging
 
-      # Exactly one backend is staged, so the VSIX cannot pick up a stale binary
-      # for another platform.
+      # Exactly one backend is staged, so a VSIX can never pick up another
+      # platform's binary.
       - name: Stage the backend
         run: node extension/scripts/stage-backend.mjs --release --target ${{ matrix.target }} --from "$GITHUB_WORKSPACE/staging"
 
-      - name: Package
-        run: npm run package -- --target ${{ matrix.target }}
+      - name: Compile
+        run: npm run compile
         working-directory: extension
+
+      # package.mjs rather than `npm run package`: the wrapper re-runs the whole
+      # check/test suite, which the verify job has already done once.
+      - name: Package
+        run: node ./scripts/package.mjs --target ${{ matrix.target }}
+        working-directory: extension
+
+      - name: Confirm the VSIX carries the right backend
+        run: |
+          VSIX=$(ls extension/*.vsix)
+          EXPECTED="extension/bin/${{ matrix.target }}/s3pulse"
+          case "${{ matrix.target }}" in win32-*) EXPECTED="$EXPECTED.exe" ;; esac
+          unzip -l "$VSIX" | grep -F "$EXPECTED" || { echo "::error::$VSIX is missing $EXPECTED"; exit 1; }
+          # A VSIX holding more than one backend would ship every platform's binary.
+          COUNT=$(unzip -l "$VSIX" | grep -cE 'extension/bin/.*/s3pulse(\.exe)?$')
+          [ "$COUNT" = "1" ] || { echo "::error::$VSIX bundles $COUNT backends, expected 1"; exit 1; }
+          echo "$VSIX carries exactly one backend for ${{ matrix.target }}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: vsix-${{ matrix.target }}
           path: extension/*.vsix
           if-no-files-found: error
+
+  release:
+    name: release
+    needs: [plan, package]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vsix-*
+          path: artifacts
+          merge-multiple: true
+      - name: Attach the VSIXes to a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+        run: |
+          ls -l artifacts
+          gh release create "$TAG" artifacts/*.vsix \
+            --title "$TAG" \
+            --notes "Built from ${{ github.sha }}. Targets: ${{ needs.plan.outputs.targets }}" \
+            --draft

@@ -96,11 +96,22 @@ VS Code resolves platform-specific extensions at install time, so a release is
 one VSIX per platform, each bundling a single native backend. End users do not
 need Rust.
 
-[`.github/workflows/release.yml`](.github/workflows/release.yml) builds all six
-on a tag push. Each target is built on a runner of its own architecture rather
-than with a cross toolchain, because the backend depends on `aws-lc-sys` — a C
-library that is awkward to cross-compile — and because a native build is the
-only one that can be smoke-tested on the runner that produced it.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds
+`darwin-arm64`, `darwin-x64`, `linux-x64` and `win32-x64` on a tag push, or on
+demand via **Run workflow**. Each target is built on a runner of its own
+architecture rather than with a cross toolchain, because the backend depends on
+`aws-lc-sys` — a C library that is awkward to cross-compile — and because a
+native build is the only one that can be smoke-tested on the runner that
+produced it.
+
+A manual run takes a JSON list of targets, so a single-target run is a cheap way
+to exercise the pipeline: macOS runners bill at ten times wall-clock on private
+repositories, and Windows at twice.
+
+ARM64 Linux and Windows are not built. Those runners are free for public
+repositories but need a paid plan on private ones. The packaging scripts already
+accept `linux-arm64` and `win32-arm64`, so restoring them means listing them in
+the workflow's runner table.
 
 To produce one locally, stage exactly one backend and package for that target:
 
