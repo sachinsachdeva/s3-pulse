@@ -23,13 +23,18 @@ Run the checks relevant to the edited areas:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+cargo deny check advisories licenses bans sources
 npm --prefix extension run check
 npm --prefix extension test
 npm --prefix extension run compile
 ```
 
-For release packaging, stage exactly one native backend and run
-`npm --prefix extension run package -- --target <platform-architecture>`.
+`cargo deny` gates CI and needs `cargo install cargo-deny` locally.
+
+For release packaging, stage exactly one native backend with
+`npm --prefix extension run stage-backend -- --release --target <platform-architecture>`,
+then package with the same target. More than one staged backend puts every
+platform's binary in every VSIX.
 
 Update `docs/json-rpc.md` for protocol changes. Errors exposed to users should
 distinguish expired/missing credentials, access denied, network failures, and
