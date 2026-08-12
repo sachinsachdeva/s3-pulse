@@ -8,10 +8,9 @@ name: Release
 # cross-compilation is fiddly — and because a native build is the only one that
 # can be smoke-tested on the runner that produced it.
 #
-# ARM64 Linux and Windows are deliberately not built. Those runners are free for
-# public repositories but need a paid plan on private ones, and this repository
-# is private. The scripts already accept linux-arm64 and win32-arm64, so adding
-# them back is a matter of listing them here.
+# All six platforms VS Code supports are built. ARM64 Linux and Windows runners
+# are free for public repositories, which this is; they would need a paid plan
+# on a private one.
 
 on:
   push:
@@ -21,7 +20,7 @@ on:
       targets:
         description: 'Targets to build (JSON array). A single target is a cheap way to validate the pipeline.'
         type: string
-        default: '["darwin-arm64","darwin-x64","linux-x64","win32-x64"]'
+        default: '["darwin-arm64","darwin-x64","linux-arm64","linux-x64","win32-arm64","win32-x64"]'
       release:
         description: 'Attach the VSIXes to a GitHub release'
         type: boolean
@@ -33,7 +32,7 @@ permissions:
 env:
   # A tag build always covers every platform; a manual run builds what was asked
   # for, so a cheap single-target run can validate the pipeline.
-  ALL_TARGETS: '["darwin-arm64","darwin-x64","linux-x64","win32-x64"]'
+  ALL_TARGETS: '["darwin-arm64","darwin-x64","linux-arm64","linux-x64","win32-arm64","win32-x64"]'
 
 jobs:
   plan:
@@ -52,7 +51,9 @@ jobs:
             'darwin-arm64': { runner: 'macos-14',     triple: 'aarch64-apple-darwin' },
             'darwin-x64':   { runner: 'macos-13',     triple: 'x86_64-apple-darwin' },
             'linux-x64':    { runner: 'ubuntu-22.04', triple: 'x86_64-unknown-linux-gnu' },
-            'win32-x64':    { runner: 'windows-2022', triple: 'x86_64-pc-windows-msvc' }
+            'linux-arm64':  { runner: 'ubuntu-22.04-arm', triple: 'aarch64-unknown-linux-gnu' },
+            'win32-x64':    { runner: 'windows-2022', triple: 'x86_64-pc-windows-msvc' },
+            'win32-arm64':  { runner: 'windows-11-arm', triple: 'aarch64-pc-windows-msvc' }
           };
           const all = JSON.parse(process.env.ALL_TARGETS);
           const requested = process.env.REQUESTED ? JSON.parse(process.env.REQUESTED) : all;
