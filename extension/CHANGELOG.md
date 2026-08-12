@@ -27,7 +27,8 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
   definition every day. Also watches earlier periods, one by default, because a
   rollover is not clean. Placeholders resolve in the feed's own IANA time zone
   (default UTC), which matters because a feed partitioned by Sydney date is
-  writing tomorrow's prefix while UTC is still on today.
+  writing tomorrow's prefix while UTC is still on today. `s3Pulse.defaultTimeZone`
+  seeds the choice for new feeds; each feed still stores its own.
 - **S3 Pulse: Copy Backend (CLI) Path** command. The bundled backend is the
   complete `s3pulse` CLI, and nothing previously revealed where it lives.
 - Alerting: a status-bar indicator summarising the health of every watched feed,

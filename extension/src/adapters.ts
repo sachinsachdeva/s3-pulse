@@ -370,6 +370,30 @@ export function timeZoneProblem(value: string): string | undefined {
   }
 }
 
+/**
+ * Time zones to offer for a templated feed, best guess first and without
+ * duplicates. Invalid names are dropped rather than offered, so a stale setting
+ * cannot put an unusable zone in front of the user.
+ */
+export function timeZoneChoices(
+  existing: string | undefined,
+  configuredDefault: string | undefined,
+  machine: string | undefined
+): string[] {
+  const ordered = [existing, configuredDefault, machine, 'UTC'];
+  const seen = new Set<string>();
+  const choices: string[] = [];
+  for (const candidate of ordered) {
+    const name = candidate?.trim();
+    if (!name || seen.has(name) || timeZoneProblem(name)) {
+      continue;
+    }
+    seen.add(name);
+    choices.push(name);
+  }
+  return choices.length > 0 ? choices : ['UTC'];
+}
+
 /** Whether a target carries any date placeholder at all. */
 export function hasDateTemplate(target: string): boolean {
   return /\{(yyyy|yy|MM|M|dd|d|HH|H)\}/.test(target.replace(/\{\{|\}\}/g, ''));

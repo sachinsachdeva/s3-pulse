@@ -288,6 +288,11 @@
           "minimum": 0,
           "maximum": 86400,
           "description": "Minimum time between alerts for the same feed. A single ongoing outage alerts once regardless of this."
+        },
+        "s3Pulse.defaultTimeZone": {
+          "type": "string",
+          "default": "",
+          "description": "IANA time zone offered first when a feed target uses date placeholders, for example Australia/Sydney. Leave empty to offer this machine's zone. Each feed still stores its own."
         }
       }
     }

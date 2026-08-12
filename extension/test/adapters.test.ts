@@ -4,6 +4,7 @@ import {
   downloadFileName,
   hasDateTemplate,
   templateProblem,
+  timeZoneChoices,
   timeZoneProblem,
   estimateCost,
   formatCost,
@@ -165,4 +166,29 @@ test('time zone names are validated against the platform database', () => {
   assert.equal(timeZoneProblem(''), undefined, 'empty means UTC, not an error');
   assert.match(timeZoneProblem('Australia/Sidney') ?? '', /Unknown time zone/);
   assert.match(timeZoneProblem('GMT+10') ?? '', /Unknown time zone/);
+});
+
+test('time zone choices are ordered by relevance and never offer a bad one', () => {
+  // Best guess first: the feed's own value, then the configured default, then
+  // the machine, with UTC always available as a fallback.
+  assert.deepEqual(
+    timeZoneChoices('Europe/London', 'Australia/Sydney', 'America/New_York'),
+    ['Europe/London', 'Australia/Sydney', 'America/New_York', 'UTC']
+  );
+
+  // A new feed leads with the configured default.
+  assert.deepEqual(
+    timeZoneChoices(undefined, 'Australia/Sydney', 'Australia/Sydney'),
+    ['Australia/Sydney', 'UTC'],
+    'no duplicates when the default matches the machine'
+  );
+
+  // A stale or mistyped setting must not be offered at all.
+  assert.deepEqual(
+    timeZoneChoices(undefined, 'Australia/Sidney', 'America/New_York'),
+    ['America/New_York', 'UTC']
+  );
+
+  assert.deepEqual(timeZoneChoices(undefined, '', undefined), ['UTC']);
+  assert.deepEqual(timeZoneChoices(undefined, '  ', 'Nowhere/Fake'), ['UTC'], 'always at least UTC');
 });

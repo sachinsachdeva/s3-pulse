@@ -8,6 +8,7 @@ import {
   normalizeWatchStatuses,
   projectedMonthlyCost,
   templateProblem,
+  timeZoneChoices,
   timeZoneProblem
 } from './adapters';
 import { AlertController } from './alerts';
@@ -317,12 +318,17 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
     // 20260812/ while UTC is still on the 11th, so the wrong zone watches a
     // prefix nothing is writing to for hours at a time.
     const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const zoneChoices = [...new Set([existing?.timeZone, local, 'UTC'].filter(Boolean))] as string[];
+    const configured = vscode.workspace.getConfiguration('s3Pulse').get<string>('defaultTimeZone', '').trim();
+    const zoneChoices = timeZoneChoices(existing?.timeZone, configured, local);
     const zone = await vscode.window.showQuickPick(
       [
         ...zoneChoices.map((name) => ({
           label: name,
-          description: name === existing?.timeZone ? 'Current' : name === local ? 'This machine' : undefined
+          description: name === existing?.timeZone
+            ? 'Current'
+            : name === configured
+              ? 'Default'
+              : name === local ? 'This machine' : undefined
         })),
         { label: 'Other…', description: 'Enter an IANA zone name' }
       ],
@@ -340,7 +346,7 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
         title: `${title} — time zone`,
         prompt: 'IANA time zone name',
         placeHolder: 'Australia/Sydney',
-        value: existing?.timeZone ?? local,
+        value: existing?.timeZone ?? configured ?? local,
         ignoreFocusOut: true,
         validateInput: (value) => timeZoneProblem(value)
       });
