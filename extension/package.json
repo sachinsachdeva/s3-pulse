@@ -2,7 +2,7 @@
   "name": "s3-pulse",
   "displayName": "S3 Pulse",
   "description": "Monitor S3 data-feed cadence, detect late arrivals, and download objects from VS Code.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "SachinSachdeva",
   "license": "MIT",
   "icon": "media/icon.png",

@@ -6,6 +6,10 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] - 2026-08-12
+
 ### Added
 
 - Hover detail on the arrival-cadence graph: file name, timestamp, size, and
