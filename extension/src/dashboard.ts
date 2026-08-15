@@ -81,6 +81,14 @@ export class DashboardManager implements vscode.Disposable {
   public async start(watcher: WatcherDefinition): Promise<void> {
     this.tree.setState(watcher.id, 'starting');
     this.#panels.get(watcher.id)?.setStatus({ watcherId: watcher.id, status: 'starting' });
+    // Starting can pause while credentials and region resolve. Without a line
+    // here the output channel goes quiet between "Backend ready" and the first
+    // poll, which is indistinguishable from a hang.
+    this.output.appendLine(
+      `[extension] Starting “${watcher.name}” on ${watcher.target} every ${watcher.pollIntervalSeconds}s`
+      + (watcher.profile ? ` using profile ${watcher.profile}` : '')
+      + (watcher.region ? ` in ${watcher.region}` : '')
+    );
     try {
       const result = await this.backend.request('watch.start', { watcher: serializeWatcher(watcher) });
       this.backend.rememberActive(watcher);

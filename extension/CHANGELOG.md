@@ -8,6 +8,20 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 Nothing yet.
 
+## [0.2.1] - 2026-08-15
+
+### Fixed
+
+- Starting a feed appeared to do nothing for several seconds. With no region
+  configured the AWS SDK queries the EC2 metadata endpoint, which never answers
+  off EC2, and each attempt logged a timeout warning that read like a failure.
+  Those warnings are now quiet by default; `RUST_LOG` still shows them.
+- The feed wizard never asked for a region, so the field existed on the model
+  and was sent to the backend but could not be set from the UI. Setting one
+  avoids the metadata lookup entirely.
+- Starting a feed now logs the target, interval, profile and region, so the wait
+  while credentials resolve is visible rather than silent.
+
 ## [0.2.0] - 2026-08-12
 
 ### Added

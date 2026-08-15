@@ -203,7 +203,7 @@ export function activate(context: vscode.ExtensionContext): void {
 async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefinition | undefined> {
   const title = existing ? 'Edit S3 Pulse Feed' : 'Add S3 Pulse Feed';
   const targetInput = await vscode.window.showInputBox({
-    title: `${title} (1/6)`,
+    title: `${title} (1/7)`,
     prompt: 'S3 bucket and prefix to monitor. Date placeholders are allowed, for example s3://bucket/trades/{yyyy}{MM}{dd}/',
     placeHolder: 's3://prod-data/trades/{yyyy}{MM}{dd}/',
     value: existing?.target,
@@ -226,7 +226,7 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
   }
 
   const name = await vscode.window.showInputBox({
-    title: `${title} (2/6)`,
+    title: `${title} (2/7)`,
     prompt: 'Display name',
     value: existing?.name ?? suggestedName(target),
     ignoreFocusOut: true,
@@ -237,7 +237,7 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
   }
 
   const profile = await vscode.window.showInputBox({
-    title: `${title} (3/6)`,
+    title: `${title} (3/7)`,
     prompt: 'AWS profile (optional)',
     placeHolder: 'Leave empty to use the normal AWS credential chain',
     value: existing?.profile ?? '',
@@ -246,6 +246,30 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
   if (profile === undefined) {
     return undefined;
   }
+
+  // Without a region the SDK falls back to querying the EC2 metadata endpoint,
+  // which on a laptop costs a few seconds of connect timeouts on every start.
+  // The field existed on the model but nothing ever set it.
+  const regionInput = await vscode.window.showInputBox({
+    title: `${title} (4/7)`,
+    prompt: 'AWS region (optional)',
+    placeHolder: 'Leave empty to use the profile or environment. Setting it avoids an EC2 metadata lookup.',
+    value: existing?.region ?? '',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      const name = value.trim();
+      if (!name) {
+        return undefined;
+      }
+      return /^[a-z]{2}(-[a-z]+)+-\d+$/.test(name)
+        ? undefined
+        : 'Enter a region such as ap-southeast-2, or leave empty';
+    }
+  });
+  if (regionInput === undefined) {
+    return undefined;
+  }
+  const region = regionInput.trim() || undefined;
 
   const defaultPoll = vscode.workspace.getConfiguration('s3Pulse').get<number>('defaultPollIntervalSeconds', 30);
   const current = existing?.pollIntervalSeconds;
@@ -261,7 +285,7 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
       seconds
     })),
     {
-      title: `${title} (4/6)`,
+      title: `${title} (5/7)`,
       placeHolder: 'Polling interval',
       ignoreFocusOut: true
     }
@@ -271,7 +295,7 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
   }
 
   const expectedInput = await vscode.window.showInputBox({
-    title: `${title} (5/6)`,
+    title: `${title} (6/7)`,
     prompt: 'Expected arrival interval in seconds (optional)',
     placeHolder: 'For example, 900 for a 15-minute feed; leave empty to auto-learn',
     value: existing?.expectedIntervalSeconds?.toString() ?? '',
@@ -302,7 +326,7 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
         minutes
       })),
     {
-      title: `${title} (6/6)`,
+      title: `${title} (7/7)`,
       placeHolder: 'Bucket width for the "files per interval" graph',
       ignoreFocusOut: true
     }
@@ -383,7 +407,7 @@ async function feedWizard(existing?: WatcherDefinition): Promise<WatcherDefiniti
     name: name.trim(),
     target,
     profile: profile.trim() || undefined,
-    region: existing?.region,
+    region,
     pollIntervalSeconds: selectedInterval.seconds,
     expectedIntervalSeconds: expectedInput.trim() ? Number(expectedInput) : undefined,
     historyLimit: Number.isInteger(historyLimit) ? Math.min(1_000, Math.max(100, historyLimit)) : 1_000,
