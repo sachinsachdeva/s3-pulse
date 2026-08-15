@@ -1,5 +1,7 @@
 # S3 Pulse
 
+[![VS Marketplace](https://vsmarketplacebadges.dev/version-short/SachinSachdeva.s3-pulse.svg)](https://marketplace.visualstudio.com/items?itemName=SachinSachdeva.s3-pulse)
+[![Installs](https://vsmarketplacebadges.dev/installs-short/SachinSachdeva.s3-pulse.svg)](https://marketplace.visualstudio.com/items?itemName=SachinSachdeva.s3-pulse)
 [![CI](https://github.com/sachinsachdeva/s3-pulse/actions/workflows/ci.yml/badge.svg)](https://github.com/sachinsachdeva/s3-pulse/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust 1.94.1+](https://img.shields.io/badge/rust-1.94.1%2B-b7410e.svg?logo=rust&logoColor=white)](rust-toolchain.toml)
@@ -11,6 +13,17 @@ S3 Pulse watches an Amazon S3 bucket prefix, keeps a bounded arrival history,
 visualizes cadence, highlights unusual gaps, and downloads individual objects.
 It is built to answer **“Is my data feed arriving when it should?”**, rather
 than act as another general-purpose S3 browser.
+
+## Install
+
+Install **S3 Pulse** from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=SachinSachdeva.s3-pulse), or from the command line:
+
+```bash
+code --install-extension SachinSachdeva.s3-pulse
+```
+
+The native backend for your platform is bundled; no Rust toolchain is needed.
 
 ## What it provides
 
