@@ -2,7 +2,7 @@
   "name": "s3-pulse",
   "displayName": "S3 Pulse",
   "description": "Monitor S3 data-feed cadence, detect late arrivals, and download objects from VS Code.",
-  "version": "0.2.1",
+  "version": "0.2.4",
   "publisher": "SachinSachdeva",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -41,6 +41,7 @@
   },
   "main": "./dist/extension.js",
   "activationEvents": [
+    "onWebviewPanel:s3Pulse.dashboard",
     "onView:s3Pulse.feeds",
     "onCommand:s3Pulse.addFeed",
     "onCommand:s3Pulse.editFeed",
@@ -142,12 +143,12 @@
         },
         {
           "command": "s3Pulse.startFeed",
-          "when": "view == s3Pulse.feeds && viewItem == s3Pulse.feed.stopped",
+          "when": "view == s3Pulse.feeds && (viewItem == s3Pulse.feed.stopped || viewItem == s3Pulse.feed.error)",
           "group": "inline@2"
         },
         {
           "command": "s3Pulse.stopFeed",
-          "when": "view == s3Pulse.feeds && viewItem == s3Pulse.feed.running",
+          "when": "view == s3Pulse.feeds && (viewItem == s3Pulse.feed.running || viewItem == s3Pulse.feed.error)",
           "group": "inline@2"
         },
         {
@@ -304,11 +305,13 @@
     "watch": "node ./esbuild.mjs --watch",
     "test": "node ./scripts/test.mjs",
     "stage-backend": "node ./scripts/stage-backend.mjs",
-    "package": "npm run check && npm test && npm run compile && node ./scripts/package.mjs"
+    "package": "npm run check && npm test && npm run compile && node ./scripts/package.mjs",
+    "test:integration": "node ./test-integration/run.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.24.2",
     "typescript": "^5.7.3"

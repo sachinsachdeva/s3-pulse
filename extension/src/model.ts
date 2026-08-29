@@ -101,6 +101,18 @@ export interface DashboardSnapshot {
   readonly defaultGraph: 'inter-arrival' | 'files-per-bucket';
   readonly requestCounts?: RequestCounts;
   readonly cost: CostModel;
+  readonly versions: Versions;
+}
+
+/**
+ * Extension and backend versions, shown together because they can genuinely
+ * differ: a configured `s3Pulse.backendPath` points at another binary, and an
+ * extension host that has not been reloaded keeps running code from a replaced
+ * install. Both mismatches are invisible without this.
+ */
+export interface Versions {
+  readonly extension: string;
+  readonly backend?: string;
 }
 
 /**

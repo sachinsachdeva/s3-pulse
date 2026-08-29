@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const store = new WatcherStore(context.globalState);
   const tree = new FeedTreeProvider(store);
   const backend = new BackendService(context.extensionPath, output);
-  const dashboards = new DashboardManager(backend, tree, output, store);
+  const dashboards = new DashboardManager(backend, tree, output, store, context.extension.packageJSON.version as string);
   // Subscribes to the backend's notifications independently of dashboards, so
   // a feed's health is tracked whether or not its panel is open.
   const alerts = new AlertController(backend, store, output);
@@ -45,35 +45,30 @@ export function activate(context: vscode.ExtensionContext): void {
       dashboards.open(watcher);
       const action = await vscode.window.showInformationMessage(`Saved S3 feed “${watcher.name}”.`, 'Start Monitoring');
       if (action === 'Start Monitoring') {
-        await runUserAction(output, () => dashboards.start(watcher));
+        await runUserAction(output, () => dashboards.startOrRetry(watcher));
       }
     }),
     vscode.commands.registerCommand('s3Pulse.openDashboard', async (argument?: unknown) => {
-      const watcher = await selectWatcher(store, argument, 'Open feed dashboard');
+      const watcher = await selectWatcher(store, argument, 'Open feed dashboard', output);
       if (watcher) {
         dashboards.open(watcher);
       }
     }),
     vscode.commands.registerCommand('s3Pulse.startFeed', async (argument?: unknown) => {
-      const watcher = await selectWatcher(store, argument, 'Start monitoring feed');
+      const watcher = await selectWatcher(store, argument, 'Start monitoring feed', output);
       if (!watcher) {
         return;
       }
-      const status = tree.stateFor(watcher.id).status;
-      if (status === 'running' || status === 'starting' || status === 'error') {
-        dashboards.open(watcher);
-        return;
-      }
-      await runUserAction(output, () => dashboards.start(watcher));
+      await runUserAction(output, () => dashboards.startOrRetry(watcher));
     }),
     vscode.commands.registerCommand('s3Pulse.stopFeed', async (argument?: unknown) => {
-      const watcher = await selectWatcher(store, argument, 'Stop monitoring feed');
+      const watcher = await selectWatcher(store, argument, 'Stop monitoring feed', output);
       if (watcher) {
         await runUserAction(output, () => dashboards.stop(watcher));
       }
     }),
     vscode.commands.registerCommand('s3Pulse.editFeed', async (argument?: unknown) => {
-      const existing = await selectWatcher(store, argument, 'Edit saved feed');
+      const existing = await selectWatcher(store, argument, 'Edit saved feed', output);
       if (!existing) {
         return;
       }
@@ -86,10 +81,14 @@ export function activate(context: vscode.ExtensionContext): void {
       // to be torn down and restarted under the same id to pick up changes.
       const state = tree.stateFor(existing.id).status;
       const wasActive = state === 'running' || state === 'starting' || state === 'error';
+      // Whether the backend actually let go decides how it is brought back: a
+      // watcher it still holds rejects a plain start as already existing.
+      let released = true;
       if (wasActive) {
         try {
           await dashboards.stop(existing);
         } catch (error) {
+          released = false;
           const saveAnyway = await vscode.window.showWarningMessage(
             `The backend could not stop “${existing.name}”: ${errorMessage(error)}`,
             { modal: true },
@@ -111,13 +110,15 @@ export function activate(context: vscode.ExtensionContext): void {
         dashboards.open(updated);
       }
       if (wasActive) {
-        await runUserAction(output, () => dashboards.start(updated));
+        await runUserAction(output, () =>
+          released ? dashboards.start(updated) : dashboards.restart(updated)
+        );
       } else {
         void vscode.window.showInformationMessage(`Updated S3 feed “${updated.name}”.`);
       }
     }),
     vscode.commands.registerCommand('s3Pulse.removeFeed', async (argument?: unknown) => {
-      const watcher = await selectWatcher(store, argument, 'Remove saved feed');
+      const watcher = await selectWatcher(store, argument, 'Remove saved feed', output);
       if (!watcher) {
         return;
       }
@@ -186,6 +187,17 @@ export function activate(context: vscode.ExtensionContext): void {
         await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(backendPath));
       }
     }),
+    // VS Code restores dashboard tabs across a window reload. Without a
+    // serializer the tab returns but nothing is behind it, so the panel renders
+    // stale HTML and every control in it does nothing.
+    vscode.window.registerWebviewPanelSerializer('s3Pulse.dashboard', {
+      async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: unknown): Promise<void> {
+        const watcherId = typeof (state as { watcherId?: unknown })?.watcherId === 'string'
+          ? (state as { watcherId: string }).watcherId
+          : undefined;
+        dashboards.restoreDashboard(panel, watcherId);
+      }
+    }),
     vscode.commands.registerCommand('s3Pulse.showOutput', () => output.show(true)),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('s3Pulse.backendPath') || event.affectsConfiguration('s3Pulse.backendLogLevel')) {
@@ -194,7 +206,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  output.appendLine(`S3 Pulse extension activated on ${process.platform}-${process.arch}`);
+  output.appendLine(`S3 Pulse ${context.extension.packageJSON.version as string} activated on ${process.platform}-${process.arch}`);
   if (vscode.env.uiKind === vscode.UIKind.Web) {
     void vscode.window.showErrorMessage('S3 Pulse requires a desktop or remote extension host to run its native backend.');
   }
@@ -440,6 +452,22 @@ function formatBucket(minutes: number): string {
 }
 
 async function selectWatcher(
+  store: WatcherStore,
+  argument: unknown,
+  placeHolder: string,
+  output: vscode.OutputChannel
+): Promise<WatcherDefinition | undefined> {
+  // Every one of these commands returns quietly when no feed comes back, so
+  // without a line here a click that resolves to nothing is indistinguishable
+  // from a click that never arrived.
+  const chosen = await pickWatcher(store, argument, placeHolder);
+  if (!chosen) {
+    output.appendLine(`[extension] ${placeHolder}: no feed selected`);
+  }
+  return chosen;
+}
+
+async function pickWatcher(
   store: WatcherStore,
   argument: unknown,
   placeHolder: string

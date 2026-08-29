@@ -12,3 +12,5 @@ esbuild.mjs
 tsconfig.json
 package-lock.json
 *.vsix
+test-integration/**
+.vscode-test/**

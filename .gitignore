@@ -2,7 +2,6 @@
 /extension/dist/
 /extension/node_modules/
 /extension/*.vsix
-/.vscode-test/
+.vscode-test/
 .DS_Store
 *.log
-

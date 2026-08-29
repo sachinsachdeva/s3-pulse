@@ -65,9 +65,14 @@ export class FeedTreeItem extends vscode.TreeItem {
     super(watcher.name, vscode.TreeItemCollapsibleState.None);
     const state = watchStatus.status;
     this.id = watcher.id;
-    this.contextValue = state === 'running' || state === 'starting' || state === 'error'
-      ? 's3Pulse.feed.running'
-      : 's3Pulse.feed.stopped';
+    // An errored feed gets its own value so the tree can offer both retry and
+    // stop. Folding it into "running" hid the start action entirely, leaving no
+    // way to retry a feed that had failed.
+    this.contextValue = state === 'error'
+      ? 's3Pulse.feed.error'
+      : state === 'running' || state === 'starting'
+        ? 's3Pulse.feed.running'
+        : 's3Pulse.feed.stopped';
     this.description = state === 'stopped' ? watcher.target : `${displayState(state)} · ${watcher.target}`;
     this.iconPath = iconForState(state);
     this.command = {

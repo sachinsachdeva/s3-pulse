@@ -8,6 +8,42 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 Nothing yet.
 
+## [0.2.4] - 2026-08-29
+
+### Fixed
+
+- The dashboard was completely inert: no metric ever populated and no button
+  did anything. The page is built inside a template literal, where a backslash
+  is an escape the literal consumes, so the regex `/\/+$/` used to trim a
+  trailing slash from an object key shipped as `//+$/` — a line comment. That
+  broke the statement, the whole 28KB script failed to parse, and nothing in
+  the page ran. Trimming now uses `split('/')`, which needs no escape.
+- Starting an already-running feed reported it instead of silently doing
+  nothing, and starting a feed whose watcher the backend still holds now
+  retries rather than failing with "Watcher already exists". The dashboard's
+  Start button and the tree's both take this path; previously only the tree's
+  did.
+- A dashboard tab restored after a window reload stayed dead. The extension
+  registered no `WebviewPanelSerializer`, so it never received the restored
+  panel, and lacked the `onWebviewPanel` activation event needed to be woken
+  by one. Panels saved before feed ids were persisted are recovered by title
+  rather than discarded.
+- Editing a feed the backend refused to release now restarts it instead of
+  failing to start it.
+
+### Added
+
+- The dashboard header shows the extension and backend versions, which can
+  legitimately differ, and flags a mismatch.
+- A dashboard that never reports itself ready is now called out in the output
+  channel instead of looking merely idle.
+- Every feed command records when it resolves to no feed, so a click can no
+  longer produce an empty log.
+- Tests render the page the way the extension does and boot the resulting
+  script against a stub DOM, plus an integration suite that drives a real
+  extension host. The parse failure above was invisible to tests that read the
+  source rather than the rendered output.
+
 ## [0.2.1] - 2026-08-15
 
 ### Fixed

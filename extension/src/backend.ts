@@ -57,6 +57,7 @@ export class BackendService implements vscode.Disposable {
   #restartTimer?: NodeJS.Timeout;
   #restartStabilityTimer?: NodeJS.Timeout;
   #restartAttempt = 0;
+  #backendVersion?: string;
   #generation = 0;
   #disposed = false;
   #suppressRestart = false;
@@ -79,6 +80,11 @@ export class BackendService implements vscode.Disposable {
       timeoutMs: options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT,
       cancellation: options.cancellation
     });
+  }
+
+  /** Version reported by the running backend, once it has handshaken. */
+  public get backendVersion(): string | undefined {
+    return this.#backendVersion;
   }
 
   public rememberActive(watcher: WatcherDefinition): void {
@@ -187,6 +193,7 @@ export class BackendService implements vscode.Disposable {
     try {
       const version = await client.request<unknown>('system.version', {}, { timeoutMs: 10_000 });
       const backendVersion = compatibleBackendVersion(version);
+      this.#backendVersion = backendVersion;
       this.output.appendLine(`[extension] Backend ready (pid ${String(client.processId)}, version ${backendVersion})`);
       if (this.#restartStabilityTimer) {
         clearTimeout(this.#restartStabilityTimer);

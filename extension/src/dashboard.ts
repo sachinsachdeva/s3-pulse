@@ -27,10 +27,18 @@ import type {
   HistorySample,
   ObjectRecord,
   RequestCounts,
+  Versions,
   WatchStatus,
   WatcherDefinition
 } from './model';
 import type { JsonRpcNotification } from './rpcProtocol';
+
+/**
+ * How long to wait for a freshly started watcher's first poll before letting
+ * the progress notification go. Long enough for credential resolution on a
+ * cold start, short enough not to leave a spinner up if a feed is simply idle.
+ */
+const FIRST_POLL_TIMEOUT = 20_000;
 
 interface DownloadReporter {
   readonly watcherId: string;
@@ -45,6 +53,14 @@ type WebviewMessage =
   | { readonly type: 'download' | 'copyUri' | 'copyKey'; readonly key: string }
   | { readonly type: 'bucketMinutes'; readonly minutes: number };
 
+/** How long a page gets to report itself ready before that is called out. */
+const HANDSHAKE_TIMEOUT = 6_000;
+
+/** The panel title, and the only thing a pre-id restored panel is known by. */
+function dashboardTitle(name: string): string {
+  return `S3 Pulse — ${name}`;
+}
+
 export class DashboardManager implements vscode.Disposable {
   readonly #panels = new Map<string, FeedDashboard>();
   readonly #subscriptions: vscode.Disposable[] = [];
@@ -54,7 +70,8 @@ export class DashboardManager implements vscode.Disposable {
     private readonly backend: BackendService,
     private readonly tree: FeedTreeProvider,
     private readonly output: vscode.OutputChannel,
-    private readonly store: WatcherStore
+    private readonly store: WatcherStore,
+    private readonly extensionVersion: string
   ) {
     this.#subscriptions.push(
       backend.onNotification((notification) => this.#handleNotification(notification)),
@@ -73,9 +90,102 @@ export class DashboardManager implements vscode.Disposable {
       void this.refresh(watcher);
       return;
     }
-    const panel = new FeedDashboard(watcher, (message) => this.#handleWebviewMessage(watcher, message));
+    this.output.appendLine(`[dashboard] Opening “${watcher.name}”`);
+    const panel = new FeedDashboard(watcher, (message) => this.#handleWebviewMessage(watcher, message), this.output);
     this.#panels.set(watcher.id, panel);
     panel.onDidDispose(() => this.#panels.delete(watcher.id));
+  }
+
+  /**
+   * Stops a watcher the backend still holds, then starts it again.
+   *
+   * A poll failure leaves the watcher registered and retrying, so plain
+   * `watch.start` would be rejected as already existing. Retrying an errored
+   * feed therefore has to tear it down first.
+   */
+  public async restart(watcher: WatcherDefinition): Promise<void> {
+    this.output.appendLine(`[extension] Retrying “${watcher.name}”`);
+    try {
+      await this.stop(watcher);
+    } catch (error) {
+      // The watcher may already be gone, for instance after a backend restart.
+      this.output.appendLine(`[extension] Nothing to stop for “${watcher.name}”: ${errorMessage(error)}`);
+      this.backend.forgetActive(watcher.id);
+    }
+    await this.start(watcher);
+  }
+
+  /**
+   * Adopts a dashboard panel VS Code restored after a window reload.
+   *
+   * Without this the tab comes back rendering cached HTML with nothing behind
+   * it: the extension holds no panel, so refreshes are skipped, the webview's
+   * handshake reaches nobody, and every control in it is inert.
+   */
+  public restoreDashboard(panel: vscode.WebviewPanel, watcherId: string | undefined): void {
+    const watcher = (watcherId ? this.store.get(watcherId) : undefined) ?? this.#watcherByTitle(panel.title);
+    if (!watcher) {
+      this.output.appendLine(
+        `[dashboard] Discarding a restored panel for unknown feed ${watcherId ?? '(no id)'}`
+      );
+      panel.dispose();
+      return;
+    }
+    const existing = this.#panels.get(watcher.id);
+    if (existing) {
+      // Already reconnected by something else; two panels for one feed would
+      // both receive updates and diverge.
+      panel.dispose();
+      return;
+    }
+    this.output.appendLine(`[dashboard] Reconnecting restored panel for “${watcher.name}”`);
+    const adopted = new FeedDashboard(
+      watcher,
+      (message) => this.#handleWebviewMessage(watcher, message),
+      this.output,
+      panel
+    );
+    this.#panels.set(watcher.id, adopted);
+    adopted.onDidDispose(() => this.#panels.delete(watcher.id));
+  }
+
+  /**
+   * Recovers a feed from a restored panel's title.
+   *
+   * Panels saved before the id was persisted come back with no state at all,
+   * and discarding them would make the tab vanish on the first reload after an
+   * upgrade. The title is the only identifying thing such a panel carries. A
+   * name shared by two feeds is not identifying, so those are left to the
+   * caller to discard rather than guessed at.
+   */
+  #watcherByTitle(title: string): WatcherDefinition | undefined {
+    const matches = this.store.list().filter((feed) => title === dashboardTitle(feed.name));
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
+  /**
+   * Start as a user means it: begin, retry, or say it is already going.
+   *
+   * A watcher that failed a poll is still registered with the backend and still
+   * retrying, so a plain `watch.start` comes back as "Watcher already exists".
+   * Both the tree's Start action and the dashboard's Start button come through
+   * here so neither can hand the user that message instead of a retry.
+   */
+  public async startOrRetry(watcher: WatcherDefinition): Promise<void> {
+    const status = this.tree.stateFor(watcher.id).status;
+    if (status === 'running' || status === 'starting') {
+      // Already going: reveal the dashboard, but say so rather than looking
+      // like the button did nothing.
+      this.output.appendLine(`[extension] “${watcher.name}” is already ${status}`);
+      this.open(watcher);
+      void vscode.window.setStatusBarMessage(`S3 Pulse: “${watcher.name}” is already ${status}`, 4000);
+      return;
+    }
+    if (status === 'error') {
+      await this.restart(watcher);
+      return;
+    }
+    await this.start(watcher);
   }
 
   public async start(watcher: WatcherDefinition): Promise<void> {
@@ -90,23 +200,86 @@ export class DashboardManager implements vscode.Disposable {
       + (watcher.region ? ` in ${watcher.region}` : '')
     );
     try {
-      const result = await this.backend.request('watch.start', { watcher: serializeWatcher(watcher) });
-      this.backend.rememberActive(watcher);
-      const status = normalizeWatchStatus(result, watcher.id);
-      const runningStatus: WatchStatus = {
-        ...status,
-        watcherId: status.watcherId || watcher.id,
-        status: status.status === 'unknown' ? 'running' : status.status
-      };
-      this.tree.setStatus(runningStatus);
-      this.#panels.get(watcher.id)?.setStatus(runningStatus);
-      await this.refresh(watcher);
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `S3 Pulse: starting “${watcher.name}”`,
+          cancellable: false
+        },
+        async (progress) => {
+          progress.report({ message: watcher.target });
+          const result = await this.backend.request('watch.start', { watcher: serializeWatcher(watcher) });
+          this.backend.rememberActive(watcher);
+          const status = normalizeWatchStatus(result, watcher.id);
+          const runningStatus: WatchStatus = {
+            ...status,
+            watcherId: status.watcherId || watcher.id,
+            status: status.status === 'unknown' ? 'running' : status.status
+          };
+          this.tree.setStatus(runningStatus);
+          this.#panels.get(watcher.id)?.setStatus(runningStatus);
+
+          // watch.start resolves when the task is created, not when the first
+          // S3 request succeeds, so a bad target or expired credentials fails
+          // asynchronously. Without waiting for the first poll the command
+          // reports success and the only sign of trouble is a tree icon.
+          progress.report({ message: 'waiting for the first poll…' });
+          const outcome = await this.#firstPollOutcome(watcher.id, FIRST_POLL_TIMEOUT);
+          if (!outcome.ok) {
+            throw new Error(outcome.message);
+          }
+          await this.refresh(watcher);
+        }
+      );
     } catch (error) {
       const message = errorMessage(error);
+      this.output.appendLine(`[extension] Could not start “${watcher.name}”: ${message}`);
       this.tree.setState(watcher.id, 'error', message);
       this.#panels.get(watcher.id)?.showError(message);
       throw error;
     }
+  }
+
+  /**
+   * Waits for the first definitive result from a freshly started watcher.
+   *
+   * Resolves ok on the first data or statistics notification, not ok on the
+   * first reported error, and ok on timeout — a slow first poll is not a
+   * failure, and the watcher keeps running either way.
+   */
+  #versions(): Versions {
+    return { extension: this.extensionVersion, backend: this.backend.backendVersion };
+  }
+
+  async #firstPollOutcome(watcherId: string, timeoutMs: number): Promise<{ ok: boolean; message: string }> {
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = (value: { ok: boolean; message: string }): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        subscription.dispose();
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish({ ok: true, message: '' }), timeoutMs);
+      const subscription = this.backend.onNotification((notification) => {
+        const params = asRecord(notification.params);
+        if (stringValue(params?.watcherId ?? params?.watcher_id) !== watcherId) {
+          return;
+        }
+        if (notification.method === 'watch.error') {
+          const nested = asRecord(params?.error);
+          finish({
+            ok: false,
+            message: stringValue(nested?.message ?? params?.message) ?? 'The feed watcher reported an error'
+          });
+        } else if (notification.method === 'statistics.updated' || notification.method === 'objects.added') {
+          finish({ ok: true, message: '' });
+        }
+      });
+    });
   }
 
   public async stop(watcher: WatcherDefinition): Promise<void> {
@@ -127,6 +300,7 @@ export class DashboardManager implements vscode.Disposable {
   public async refresh(watcher: WatcherDefinition): Promise<void> {
     const panel = this.#panels.get(watcher.id);
     if (!panel) {
+      this.output.appendLine(`[dashboard] Refresh for “${watcher.name}” skipped: no open panel`);
       return;
     }
     const currentStatus = this.tree.stateFor(watcher.id);
@@ -139,7 +313,8 @@ export class DashboardManager implements vscode.Disposable {
         statistics: panel.statistics,
         defaultGraph: defaultGraph(),
         requestCounts: currentStatus.requestCounts ?? panel.requestCounts,
-        cost: costModel()
+        cost: costModel(),
+        versions: this.#versions()
       });
       return;
     }
@@ -182,7 +357,8 @@ export class DashboardManager implements vscode.Disposable {
       requestCounts: frequencyResult.status === 'fulfilled'
         ? normalizeRequestCounts(asRecord(frequencyResult.value)?.requestCounts) ?? panel.requestCounts
         : panel.requestCounts,
-      cost: costModel()
+      cost: costModel(),
+      versions: this.#versions()
     };
     panel.setSnapshot(snapshot);
     if (failures.length === 3) {
@@ -209,6 +385,7 @@ export class DashboardManager implements vscode.Disposable {
   }
 
   async #handleWebviewMessage(watcher: WatcherDefinition, message: WebviewMessage): Promise<void> {
+    this.output.appendLine(`[dashboard] “${watcher.name}” sent ${message.type}`);
     try {
       switch (message.type) {
         case 'ready':
@@ -216,7 +393,7 @@ export class DashboardManager implements vscode.Disposable {
           await this.refresh(watcher);
           return;
         case 'start':
-          await this.start(watcher);
+          await this.startOrRetry(watcher);
           return;
         case 'stop':
           await this.stop(watcher);
@@ -405,11 +582,16 @@ class FeedDashboard implements vscode.Disposable {
 
   public constructor(
     public readonly watcher: WatcherDefinition,
-    onMessage: (message: WebviewMessage) => Promise<void>
+    onMessage: (message: WebviewMessage) => Promise<void>,
+    private readonly output?: vscode.OutputChannel,
+    // A panel VS Code restored after a window reload. Adopting it is what
+    // reconnects a restored tab to the extension; without this it renders its
+    // cached HTML forever and every control in it is inert.
+    restored?: vscode.WebviewPanel
   ) {
-    this.#panel = vscode.window.createWebviewPanel(
+    this.#panel = restored ?? vscode.window.createWebviewPanel(
       's3Pulse.dashboard',
-      `S3 Pulse — ${watcher.name}`,
+      dashboardTitle(watcher.name),
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -417,15 +599,42 @@ class FeedDashboard implements vscode.Disposable {
         localResourceRoots: []
       }
     );
+    if (restored) {
+      // Scripts are not re-enabled automatically on a restored panel.
+      this.#panel.webview.options = { enableScripts: true, localResourceRoots: [] };
+      this.#panel.title = dashboardTitle(watcher.name);
+    }
     this.#panel.iconPath = undefined;
-    this.#panel.webview.html = dashboardHtml(this.#panel.webview);
+    // Always reset the HTML, so a restored panel runs current code rather than
+    // the markup cached from whichever version created it.
+    this.#panel.webview.html = dashboardHtml(this.#panel.webview, watcher.id);
+
+    // The page reports itself ready as its last act. If that never arrives the
+    // panel still renders its placeholder markup and looks merely idle, while
+    // in fact nothing is listening and every control in it is dead. Saying so
+    // is the difference between a diagnosable failure and a silent one.
+    const handshake = setTimeout(() => {
+      this.output?.appendLine(
+        `[dashboard] “${watcher.name}” never reported ready. The page is not talking to the extension:`
+        + ' its script was blocked or threw. Run "Developer: Open Webview Developer Tools" and check the console.'
+      );
+    }, HANDSHAKE_TIMEOUT);
+
     this.#subscriptions.push(
+      new vscode.Disposable(() => clearTimeout(handshake)),
       this.#panel.onDidDispose(() => this.dispose()),
       this.#panel.webview.onDidReceiveMessage((value: unknown) => {
+        clearTimeout(handshake);
         const message = parseWebviewMessage(value);
-        if (message) {
-          void onMessage(message);
+        if (!message) {
+          // Dropping this quietly would hide a page sending something the
+          // extension no longer understands, which looks like a dead button.
+          this.output?.appendLine(
+            `[dashboard] “${watcher.name}” sent an unrecognised message: ${JSON.stringify(value)?.slice(0, 200)}`
+          );
+          return;
         }
+        void onMessage(message);
       })
     );
   }
@@ -461,6 +670,9 @@ class FeedDashboard implements vscode.Disposable {
   }
 
   public setSnapshot(snapshot: DashboardSnapshot): void {
+    this.#log(`[dashboard] Snapshot -> “${snapshot.feed.name}”: `
+      + `${snapshot.objects.length} objects, status ${snapshot.status.status}, `
+      + `extension v${snapshot.versions.extension}, backend ${snapshot.versions.backend ?? 'not started'}`);
     this.#objects = [...snapshot.objects];
     this.#history = [...snapshot.history];
     this.#statistics = snapshot.statistics;
@@ -518,6 +730,10 @@ class FeedDashboard implements vscode.Disposable {
     this.#disposeEmitter.fire();
     this.#disposeEmitter.dispose();
     this.#panel.dispose();
+  }
+
+  #log(line: string): void {
+    this.output?.appendLine(line);
   }
 
   #post(message: unknown): void {
@@ -605,7 +821,7 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
-function dashboardHtml(webview: vscode.Webview): string {
+function dashboardHtml(webview: vscode.Webview, watcherId: string): string {
   const nonce = randomBytes(24).toString('base64');
   return `<!doctype html>
 <html lang="en">
@@ -645,6 +861,14 @@ function dashboardHtml(webview: vscode.Webview): string {
     #cost-metric[hidden] { display: none; }
     section { border: 1px solid var(--vscode-panel-border); border-radius: 5px; margin-top: 14px; overflow: hidden; }
     .section-heading { justify-content: space-between; padding: 10px 12px; background: var(--vscode-sideBar-background); border-bottom: 1px solid var(--vscode-panel-border); }
+    .title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    /* The point of this is at-a-glance certainty about which build is running,
+       so it is a legible badge rather than muted fine print. */
+    .versions { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem;
+      font-variant-numeric: tabular-nums; padding: 2px 9px; border-radius: 999px;
+      border: 1px solid var(--vscode-panel-border); color: var(--vscode-foreground);
+      background: var(--vscode-badge-background); }
+    .versions .mismatch { color: var(--vscode-editorWarning-foreground, #cca700); font-weight: 600; }
     .graph-wrap { position: relative; min-height: 270px; padding: 12px; }
     canvas { display: block; width: 100%; height: 245px; }
     /* An author display rule outranks the user-agent [hidden] rule, so hiding
@@ -684,9 +908,9 @@ function dashboardHtml(webview: vscode.Webview): string {
     @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
   </style>
 </head>
-<body>
+<body data-watcher-id="${watcherId}">
   <header>
-    <div><h1 id="feed-name">S3 Pulse</h1><div class="target" id="feed-target"></div></div>
+    <div><div class="title-row"><h1 id="feed-name">S3 Pulse</h1><span class="versions" id="versions"></span></div><div class="target" id="feed-target"></div></div>
     <div class="header-actions">
       <span id="status" class="status stopped">Stopped</span>
       <button id="start" class="primary" type="button">Start</button>
@@ -740,8 +964,13 @@ function dashboardHtml(webview: vscode.Webview): string {
     (() => {
       'use strict';
       const vscode = acquireVsCodeApi();
+      // Read from the DOM rather than interpolated into this script, so the
+      // script stays substitution-free and can be syntax-checked on its own.
+      // Persisted immediately so a panel VS Code restores after a reload
+      // carries the id needed to reconnect it to its feed.
+      const WATCHER_ID = document.body.dataset.watcherId || '';
       const prior = vscode.getState() || {};
-      const state = { feed: null, status: { status: 'stopped' }, objects: [], history: [], statistics: {}, sort: prior.sort || { column: 'lastModified', direction: 'desc' }, search: prior.search || '', graphMode: prior.graphMode || null, bucket: 15, requestCounts: null, cost: null };
+      const state = { feed: null, status: { status: 'stopped' }, objects: [], history: [], statistics: {}, sort: prior.sort || { column: 'lastModified', direction: 'desc' }, search: prior.search || '', graphMode: prior.graphMode || null, bucket: 15, requestCounts: null, cost: null, versions: null };
       const byId = (id) => document.getElementById(id);
       const rows = byId('rows');
       const search = byId('search');
@@ -803,6 +1032,7 @@ function dashboardHtml(webview: vscode.Webview): string {
           if (Number.isFinite(snapshot.feed && snapshot.feed.bucketMinutes)) state.bucket = snapshot.feed.bucketMinutes;
           state.requestCounts = snapshot.requestCounts || state.requestCounts;
           state.cost = snapshot.cost || state.cost;
+          state.versions = snapshot.versions || state.versions;
           render();
         } else if (message.type === 'objectsAdded') {
           mergeObjects(message.objects || []); render();
@@ -834,7 +1064,7 @@ function dashboardHtml(webview: vscode.Webview): string {
 
       function render() {
         if (state.feed) { byId('feed-name').textContent = state.feed.name; byId('feed-target').textContent = state.feed.target; }
-        renderStatus(); renderSummary(); renderGraph(); renderGrid();
+        renderStatus(); renderVersions(); renderSummary(); renderGraph(); renderGrid();
       }
 
       function renderStatus() {
@@ -847,6 +1077,19 @@ function dashboardHtml(webview: vscode.Webview): string {
         byId('start').hidden = active;
         byId('stop').hidden = !active;
         byId('start').disabled = status === 'starting';
+      }
+
+      // Extension and backend are versioned separately and can genuinely
+      // diverge, so both are shown rather than one standing in for the other.
+      function renderVersions() {
+        const v = state.versions;
+        const element = byId('versions');
+        if (!v) { element.textContent = ''; return; }
+        element.replaceChildren();
+        const add = (text, warn) => { const s = document.createElement('span'); s.textContent = text; if (warn) s.className = 'mismatch'; element.appendChild(s); };
+        add('extension v' + v.extension);
+        add('  ·  backend ' + (v.backend ? 'v' + v.backend : 'not started'),
+            Boolean(v.backend) && v.backend !== v.extension);
       }
 
       function renderSummary() {
@@ -1075,7 +1318,7 @@ function dashboardHtml(webview: vscode.Webview): string {
           ];
         }
         // A directory-marker key ends in '/', whose basename is empty.
-        const name = point.key ? String(point.key).replace(/\/+$/, '').split('/').pop() : '';
+        const name = point.key ? String(point.key).split('/').filter(Boolean).pop() : '';
         const lines = [{ text: name || 'Arrival', strong: true }];
         lines.push({ text: dateTime(new Date(point.time).toISOString()) + '  (' + relative(point.time) + ')' });
         const facts = [];
@@ -1111,7 +1354,7 @@ function dashboardHtml(webview: vscode.Webview): string {
         const element = byId('toast'); element.textContent = String(message || ''); element.className = level === 'error' ? 'error' : ''; element.setAttribute('role', level === 'error' ? 'alert' : 'status'); element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { element.hidden = true; }, level === 'error' ? 9000 : 3000);
       }
 
-      function persist() { vscode.setState({ sort: state.sort, search: state.search, graphMode: state.graphMode }); }
+      function persist() { vscode.setState({ watcherId: WATCHER_ID, sort: state.sort, search: state.search, graphMode: state.graphMode }); }
       function dateValue(value) { const result = Date.parse(value); return Number.isFinite(result) ? result : 0; }
       function dateTime(value) { const time = dateValue(value); return time ? new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' }).format(time) : '—'; }
       function shortTime(value) { return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(value); }
@@ -1120,6 +1363,7 @@ function dashboardHtml(webview: vscode.Webview): string {
       function duration(value) { if (!Number.isFinite(value)) return '—'; const seconds = Math.max(0, Math.round(value)); if (seconds < 60) return seconds + 's'; if (seconds < 3600) return Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's'; if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ' + Math.floor(seconds % 3600 / 60) + 'm'; return Math.floor(seconds / 86400) + 'd ' + Math.floor(seconds % 86400 / 3600) + 'h'; }
       function compactDuration(value) { if (value < 60) return Math.round(value) + 's'; if (value < 3600) return Math.round(value / 60) + 'm'; if (value < 86400) return (value / 3600).toFixed(value < 36000 ? 1 : 0) + 'h'; return (value / 86400).toFixed(1) + 'd'; }
       function relative(value) { const time = typeof value === 'number' ? value : dateValue(value); if (!time) return '—'; const seconds = Math.round((Date.now() - time) / 1000); if (seconds < -5) return 'in ' + duration(-seconds); if (seconds < 5) return 'just now'; return duration(seconds) + ' ago'; }
+      persist();
       vscode.postMessage({ type: 'ready' });
     })();
   </script>

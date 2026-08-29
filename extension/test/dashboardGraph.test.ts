@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { renderPage, renderedScript, SOURCE_PATH } from './renderPage';
 
 // The dashboard webview is a page built inside a template literal, so tsc never
 // type-checks the script it contains and the other tests cannot import it: the
@@ -10,25 +11,9 @@ import { test } from 'node:test';
 // way to cover this code, and it has the advantage of exercising exactly what
 // ships rather than a copy that can drift.
 
-const SOURCE_PATH = 'src/dashboard.ts';
-
-function readWebviewScript(): string {
-  let source: string;
-  try {
-    source = readFileSync(SOURCE_PATH, 'utf8');
-  } catch {
-    throw new Error(`Could not read ${SOURCE_PATH}; run the tests from the extension directory`);
-  }
-  const tag = source.indexOf('<script nonce=');
-  const start = source.indexOf('>', tag) + 1;
-  const end = source.indexOf('</script>', start);
-  if (tag < 0 || end < 0) {
-    throw new Error('Could not locate the webview script in the dashboard template');
-  }
-  return source.slice(start, end);
-}
-
-const webviewScript = readWebviewScript();
+// Rendered, not read: the source text still contains template escapes that the
+// browser never sees, so testing it would test something that does not ship.
+const webviewScript = renderedScript(renderPage());
 
 /** Lifts one top-level function declaration out of the webview script. */
 function extractFunction(name: string): string {
@@ -182,4 +167,19 @@ test('bucket points carry their span so the tooltip can state the window', () =>
   const buckets = graph.bucketPoints(samples, 15);
   assert.ok(buckets.length >= 1);
   assert.equal(buckets[0]?.spanMs, 15 * 60_000);
+});
+
+test('the webview carries its feed id so a restored panel can be reconnected', () => {
+  // VS Code restores dashboard tabs after a window reload and hands the panel
+  // back with only the webview's persisted state. Without the id in that state
+  // the panel cannot be matched to a feed, and it stays inert forever.
+  const source = readFileSync(SOURCE_PATH, 'utf8');
+  assert.match(source, /<body data-watcher-id="\$\{watcherId\}">/, 'the id is rendered into the page');
+  assert.match(webviewScript, /const WATCHER_ID = document\.body\.dataset\.watcherId/, 'the script reads it');
+  assert.match(webviewScript, /setState\(\{\s*watcherId: WATCHER_ID/, 'and persists it for restore');
+
+  // It has to be persisted before anything else can fail, otherwise a panel
+  // that never received a snapshot would come back with no id.
+  const persistCall = webviewScript.indexOf('persist();\n      vscode.postMessage({ type: \'ready\' })');
+  assert.ok(persistCall > 0, 'state is persisted on load, not only on user interaction');
 });
