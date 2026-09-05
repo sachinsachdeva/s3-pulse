@@ -49,6 +49,7 @@ pub enum StoreErrorKind {
     AccessDenied,
     NotFound,
     Network,
+    ServiceUnavailable,
     Cancelled,
     AlreadyExists,
     InvalidResponse,
@@ -163,6 +164,22 @@ impl StoreError {
             ],
         ) {
             (StoreErrorKind::Network, true)
+        } else if contains_any(
+            &normalized,
+            &[
+                "internalerror",
+                "internal error",
+                "serviceunavailable",
+                "service unavailable",
+                "slowdown",
+                "slow down",
+            ],
+        ) {
+            // S3 answers these with "please try again", and an S3-compatible
+            // server in trouble answers the same way. Reporting them as a
+            // generic failure sends the user hunting through credentials and
+            // bucket policy for a problem on the other end of the wire.
+            (StoreErrorKind::ServiceUnavailable, true)
         } else {
             (StoreErrorKind::Other, true)
         };
@@ -283,12 +300,53 @@ mod tests {
     fn an_unrecognised_failure_is_other_and_retryable() {
         let error = StoreError::aws(
             "ListObjectsV2",
-            Some("SlowDown"),
+            Some("SomethingNobodyHasSeen"),
             None,
             &Layered::new("service error"),
         );
         assert_eq!(error.kind, StoreErrorKind::Other);
         assert!(error.retryable);
+    }
+
+    #[test]
+    fn a_failure_on_the_server_side_is_named_as_one() {
+        // The user reads this to decide where to look. "Other" sends them
+        // through their own credentials and bucket policy for a problem they
+        // cannot fix and that will very likely clear on its own.
+        let opaque = Layered::new("service error");
+        for code in ["InternalError", "ServiceUnavailable", "SlowDown"] {
+            let error = StoreError::aws("ListObjectsV2", Some(code), None, &opaque);
+            assert_eq!(error.kind, StoreErrorKind::ServiceUnavailable, "{code}");
+            assert!(error.retryable, "{code} clears on its own");
+        }
+    }
+
+    #[test]
+    fn an_s3_compatible_server_losing_its_storage_is_a_server_side_failure() {
+        // Verbatim from MinIO with no drives available. It arrives as a plain
+        // InternalError, and nothing in it points at the caller.
+        let error = StoreError::aws(
+            "ListObjectsV2",
+            Some("InternalError"),
+            Some("We encountered an internal error, please try again."),
+            &Layered::new("service error")
+                .caused_by(Layered::new("cause(listPathRaw: 0 drives provided)")),
+        );
+        assert_eq!(error.kind, StoreErrorKind::ServiceUnavailable);
+        assert!(error.retryable);
+    }
+
+    #[test]
+    fn a_transport_failure_is_not_relabelled_as_a_server_side_one() {
+        // Both are retryable, so only the label distinguishes them, and the
+        // label is what tells the user whether to check their own network.
+        let error = StoreError::aws(
+            "ListObjectsV2",
+            None,
+            None,
+            &Layered::new("dispatch failure").caused_by(Layered::new("connection closed")),
+        );
+        assert_eq!(error.kind, StoreErrorKind::Network);
     }
 
     #[test]

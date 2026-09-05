@@ -53,6 +53,17 @@ type WebviewMessage =
   | { readonly type: 'download' | 'copyUri' | 'copyKey'; readonly key: string }
   | { readonly type: 'bucketMinutes'; readonly minutes: number };
 
+/**
+ * The result of waiting for a freshly started watcher's first poll. `warning`
+ * carries a failure the backend is retrying, which is worth reporting but is
+ * not a reason to fail the start.
+ */
+interface PollOutcome {
+  readonly ok: boolean;
+  readonly message: string;
+  readonly warning?: string;
+}
+
 /** How long a page gets to report itself ready before that is called out. */
 const HANDSHAKE_TIMEOUT = 6_000;
 
@@ -228,6 +239,12 @@ export class DashboardManager implements vscode.Disposable {
           if (!outcome.ok) {
             throw new Error(outcome.message);
           }
+          if (outcome.warning) {
+            // It started, but the first polls did not go cleanly. Saying so
+            // beats a dashboard that is simply emptier than expected.
+            this.output.appendLine(`[extension] “${watcher.name}” is retrying: ${outcome.warning}`);
+            this.#panels.get(watcher.id)?.showInfo(`Retrying: ${outcome.warning}`);
+          }
           await this.refresh(watcher);
         }
       );
@@ -251,10 +268,16 @@ export class DashboardManager implements vscode.Disposable {
     return { extension: this.extensionVersion, backend: this.backend.backendVersion };
   }
 
-  async #firstPollOutcome(watcherId: string, timeoutMs: number): Promise<{ ok: boolean; message: string }> {
+  async #firstPollOutcome(watcherId: string, timeoutMs: number): Promise<PollOutcome> {
     return await new Promise((resolve) => {
       let settled = false;
-      const finish = (value: { ok: boolean; message: string }): void => {
+      // A failure the backend intends to retry is not a failure to start: the
+      // watcher is registered and still polling, and S3 answering one request
+      // with a 5xx says nothing about the next one. Tearing the start down
+      // over it would turn a blip on the far side of the wire into a feed the
+      // user has to notice and restart by hand.
+      let transient: string | undefined;
+      const finish = (value: PollOutcome): void => {
         if (settled) {
           return;
         }
@@ -263,7 +286,7 @@ export class DashboardManager implements vscode.Disposable {
         subscription.dispose();
         resolve(value);
       };
-      const timer = setTimeout(() => finish({ ok: true, message: '' }), timeoutMs);
+      const timer = setTimeout(() => finish({ ok: true, message: '', warning: transient }), timeoutMs);
       const subscription = this.backend.onNotification((notification) => {
         const params = asRecord(notification.params);
         if (stringValue(params?.watcherId ?? params?.watcher_id) !== watcherId) {
@@ -271,12 +294,15 @@ export class DashboardManager implements vscode.Disposable {
         }
         if (notification.method === 'watch.error') {
           const nested = asRecord(params?.error);
-          finish({
-            ok: false,
-            message: stringValue(nested?.message ?? params?.message) ?? 'The feed watcher reported an error'
-          });
+          const message = stringValue(nested?.message ?? params?.message)
+            ?? 'The feed watcher reported an error';
+          if (nested?.retryable === true) {
+            transient = message;
+            return;
+          }
+          finish({ ok: false, message });
         } else if (notification.method === 'statistics.updated' || notification.method === 'objects.added') {
-          finish({ ok: true, message: '' });
+          finish({ ok: true, message: '', warning: transient });
         }
       });
     });

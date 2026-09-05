@@ -98,6 +98,25 @@ test('a backend error alerts and counts as critical', () => {
   assert.match(alert?.message ?? '', /expired token/);
 });
 
+test('a failure the backend is retrying is degraded, not stopped', () => {
+  // S3 answering one request with a 5xx says nothing about the next one, and
+  // the watcher is still polling. Calling that "stopped" and colouring it
+  // critical sends someone hunting for a fault on their own side.
+  const engine = engineAt({ now: 0 }, { ...DEFAULT_ALERT_POLICY, confirmObservations: 1 });
+  const alert = engine.observe({
+    watcherId: 'a',
+    name: 'Trades',
+    state: 'error',
+    error: 'ListObjectsV2 failed: InternalError: We encountered an internal error, please try again.',
+    retryable: true
+  });
+  assert.equal(alert?.kind, 'error');
+  assert.equal(alert?.severity, 'warning', 'a transient failure does not outrank a real outage');
+  assert.equal(engine.severityOf('a'), 'warning');
+  assert.match(alert?.message ?? '', /retrying/);
+  assert.doesNotMatch(alert?.message ?? '', /stopped/);
+});
+
 test('policy switches suppress the kinds they disable', () => {
   const engine = engineAt({ now: 0 }, { ...DEFAULT_ALERT_POLICY, confirmObservations: 1, alertOnLate: false });
   assert.equal(

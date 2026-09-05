@@ -227,6 +227,29 @@ Clients must ignore unknown notification methods and unknown result fields.
 
 Standard JSON-RPC codes are used for parse, invalid request, method-not-found,
 and invalid-params failures. S3 Pulse application errors use the range
-`-32000..-32099`. Error `data` may contain a stable `kind` such as
-`watcherNotFound`, `accessDenied`, `credentials`, `network`, `cancelled`, or
-`io`.
+`-32000..-32099`.
+
+Error `data`, and the `error` object on a `watch.error` notification, carry a
+stable `kind`, a human-readable `message`, and a `retryable` flag:
+
+| `kind` | Meaning |
+| --- | --- |
+| `authentication` | Credentials are missing, expired, or rejected. |
+| `accessDenied` | The credentials are valid but not permitted. |
+| `notFound` | The bucket, key, or prefix does not exist. |
+| `network` | The request never reached the service. |
+| `serviceUnavailable` | The service answered with a server-side failure such as `InternalError`, `ServiceUnavailable`, or `SlowDown`. |
+| `cancelled` | The operation was cancelled. |
+| `alreadyExists` | A watcher with that id is already registered. |
+| `invalidResponse` | The service replied with something unusable. |
+| `io` | A local filesystem failure, during a download. |
+| `other` | Unrecognised. |
+
+`retryable` says whether the watcher is still polling. A watcher that reports a
+retryable failure has not stopped and may recover without intervention, so
+clients should present it as degraded rather than failed. `network` and
+`serviceUnavailable` are always retryable; `authentication`, `accessDenied`,
+and `notFound` never are.
+
+New `kind` values may be added, so treat an unrecognised one as `other` and
+rely on `retryable` for behaviour.
