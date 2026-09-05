@@ -8,6 +8,36 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 Nothing yet.
 
+## [0.2.5] - 2026-09-05
+
+### Fixed
+
+- A failure on the service's side was reported as though it were yours. An S3
+  `InternalError`, `ServiceUnavailable` or `SlowDown` fell through to the
+  catch-all category, so the feed went red and read "stopped" — sending you
+  through your own credentials and bucket policy for something you cannot fix
+  and that usually clears by itself. These now have their own
+  `serviceUnavailable` category, classified after network failures so a real
+  transport problem keeps its more specific label.
+- Starting a feed no longer fails on a failure the backend intends to retry.
+  The watcher is registered and still polling, and one server-side error says
+  nothing about the next request, so failing the start turned a momentary blip
+  into a feed you had to notice and restart by hand. It is reported instead,
+  and the dashboard says it is retrying.
+- A retryable failure alerts as a warning rather than critical, and is worded
+  "retrying" rather than "stopped", so a blip does not outrank a real outage in
+  the status bar.
+
+### Changed
+
+- `docs/json-rpc.md` now matches the error enum. It had listed a `credentials`
+  kind that has never been serialised, omitted four real ones, and never
+  documented the `retryable` flag that says whether a watcher is still polling.
+- Releases publish one package per platform at a time, with retries. The
+  Marketplace throttles consecutive publishes, and a single invocation for all
+  six abandoned the rest on the first timeout — which left different platforms
+  offered different versions until someone noticed.
+
 ## [0.2.4] - 2026-08-29
 
 ### Fixed
