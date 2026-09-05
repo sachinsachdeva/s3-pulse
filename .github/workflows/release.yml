@@ -277,10 +277,80 @@ jobs:
             console.log(`${files.length} VSIX files for ${targets.length} targets`);
           '
 
-      # One invocation with every package, so the Marketplace treats them as a
-      # single version with per-platform downloads rather than separate releases.
+      # One package per invocation, retried, rather than one invocation with all
+      # six. The Marketplace throttles consecutive publishes: it accepts about
+      # two quickly and then hangs the next until a 180s timeout. A single
+      # invocation abandons every remaining package at that point, which leaves
+      # the Marketplace offering the new version to some platforms and the old
+      # one to the rest — exactly what the check above exists to prevent, just
+      # arrived at from the other side.
+      #
+      # Publishing one at a time also makes a re-run safe: a target already at
+      # this version is reported as such by vsce and treated as done, so a
+      # partial run is finished simply by running it again.
       - name: Publish
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx --no-install vsce publish --packagePath $(ls "$GITHUB_WORKSPACE"/artifacts/*.vsix | tr '\n' ' ')
         working-directory: extension
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          packages=("$GITHUB_WORKSPACE"/artifacts/*.vsix)
+          if [ ${#packages[@]} -eq 0 ]; then
+            echo "::error::No VSIX files to publish"
+            exit 1
+          fi
+
+          published=()
+          failed=()
+          last=$(( ${#packages[@]} - 1 ))
+
+          for index in "${!packages[@]}"; do
+            package="${packages[$index]}"
+            name=$(basename "$package")
+            done_with_it=false
+
+            for attempt in 1 2 3; do
+              echo "::group::Publishing $name (attempt $attempt)"
+              if output=$(npx --no-install vsce publish --packagePath "$package" 2>&1); then
+                echo "$output"
+                echo "::endgroup::"
+                done_with_it=true
+                break
+              fi
+              echo "$output"
+              echo "::endgroup::"
+
+              # Re-running after a partial failure re-offers packages that
+              # already landed. That is success, not an error.
+              if grep -qiE 'already exists|already published' <<<"$output"; then
+                echo "$name is already published at this version"
+                done_with_it=true
+                break
+              fi
+
+              if [ "$attempt" -lt 3 ]; then
+                backoff=$((attempt * 60))
+                echo "Retrying $name in ${backoff}s"
+                sleep "$backoff"
+              fi
+            done
+
+            if [ "$done_with_it" = true ]; then
+              published+=("$name")
+            else
+              failed+=("$name")
+            fi
+
+            # Space the publishes out; back to back is what draws the throttle.
+            if [ "$index" -lt "$last" ]; then
+              sleep 20
+            fi
+          done
+
+          echo "Published ${#published[@]} of ${#packages[@]}: ${published[*]:-none}"
+
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::error::Not published: ${failed[*]}. The Marketplace is now serving this version to some platforms and the previous one to the rest. Re-run this workflow with the same inputs; packages that already landed are skipped."
+            exit 1
+          fi
