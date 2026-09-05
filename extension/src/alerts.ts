@@ -20,6 +20,7 @@ interface FeedFacts {
   health?: FeedHealth;
   state: 'running' | 'error' | 'other';
   error?: string;
+  retryable?: boolean;
 }
 
 export class AlertController implements vscode.Disposable {
@@ -97,11 +98,15 @@ export class AlertController implements vscode.Disposable {
         }
         facts.state = status.status === 'error' ? 'error' : 'running';
         facts.error = status.error;
+        if (status.status !== 'error') {
+          facts.retryable = undefined;
+        }
         break;
       }
       case 'watch.error': {
         facts.state = 'error';
         facts.error = readError(params?.error);
+        facts.retryable = readRetryable(params?.error);
         break;
       }
       default:
@@ -114,7 +119,8 @@ export class AlertController implements vscode.Disposable {
       name: this.#nameOf(watcherId),
       state: facts.state === 'error' ? 'error' : 'running',
       health: facts.health,
-      error: facts.error
+      error: facts.error,
+      retryable: facts.retryable
     });
     if (alert) {
       this.#notify(alert);
@@ -193,7 +199,8 @@ export class AlertController implements vscode.Disposable {
 
 function describeFeed(name: string, facts: FeedFacts): string {
   if (facts.state === 'error') {
-    return `$(error) ${name} — ${facts.error ?? 'error'}`;
+    const icon = facts.retryable ? '$(warning)' : '$(error)';
+    return `${icon} ${name} — ${facts.error ?? 'error'}`;
   }
   const health = facts.health;
   if (!health) {
@@ -236,6 +243,12 @@ function readError(value: unknown): string | undefined {
   }
   const message = (value as Record<string, unknown> | undefined)?.message;
   return typeof message === 'string' ? message : undefined;
+}
+
+/** Whether the backend is still polling despite this failure. */
+function readRetryable(value: unknown): boolean | undefined {
+  const flag = (value as Record<string, unknown> | undefined)?.retryable;
+  return typeof flag === 'boolean' ? flag : undefined;
 }
 
 function readPolicy(): AlertPolicy {

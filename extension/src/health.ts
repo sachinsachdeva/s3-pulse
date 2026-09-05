@@ -16,6 +16,13 @@ export interface FeedSnapshot {
   readonly state: WatchState;
   readonly health?: FeedHealth;
   readonly error?: string;
+  /**
+   * The backend judged this failure worth retrying — a server-side 5xx or a
+   * transport blip — and is still polling. A feed in that state is degraded,
+   * not stopped, and saying "stopped" sends someone looking for a fault on
+   * their side of the wire that is not there.
+   */
+  readonly retryable?: boolean;
 }
 
 export interface AlertPolicy {
@@ -101,7 +108,9 @@ function describe(snapshot: FeedSnapshot, kind: AlertKind): string {
   const health = snapshot.health;
   switch (kind) {
     case 'error':
-      return `${snapshot.name} stopped: ${snapshot.error ?? 'the backend reported an error'}`;
+      return snapshot.retryable
+        ? `${snapshot.name}: ${snapshot.error ?? 'the backend reported an error'} — retrying`
+        : `${snapshot.name} stopped: ${snapshot.error ?? 'the backend reported an error'}`;
     case 'late': {
       const overdue = health?.overdueSeconds;
       const late = overdue !== undefined && Number.isFinite(overdue)
@@ -181,7 +190,7 @@ export class AlertEngine {
     const episode = episodeOf(snapshot);
 
     entry.severity = snapshot.state === 'error'
-      ? 'critical'
+      ? (snapshot.retryable ? 'warning' : 'critical')
       : snapshot.health?.severity ?? 'unknown';
 
     if (!kind || !episode) {
