@@ -3,8 +3,8 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use s3pulse_core::{
-    AwsS3Options, AwsS3Store, DownloadRequest, HistorySnapshot, ObjectStore, PollingWatcher, S3Uri,
-    WatcherConfig,
+    AwsS3Options, AwsS3Store, DateTemplate, DownloadRequest, HistorySnapshot, ObjectStore,
+    PollingWatcher, S3Uri, WatcherConfig,
 };
 use serde_json::{json, Map, Value};
 use tokio::{
@@ -65,6 +65,9 @@ struct WatchSession {
     name: String,
     target: S3Uri,
     target_display: String,
+    /// Parsed once by the watcher; kept here so a download can be checked
+    /// against the template rather than the unrendered prefix text.
+    template: Option<DateTemplate>,
     store: Arc<dyn ObjectStore>,
     snapshot: RwLock<Option<HistorySnapshot>>,
     cancellation: CancellationToken,
@@ -188,12 +191,14 @@ where
         };
         let mut watcher =
             PollingWatcher::new(config, Arc::clone(&store)).map_err(ErrorObject::invalid_params)?;
+        let template = watcher.template().cloned();
         let cancellation = CancellationToken::new();
         let session = Arc::new(WatchSession {
             id: watcher_id.clone(),
             name,
             target_display: target.to_string(),
             target,
+            template,
             store,
             snapshot: RwLock::new(None),
             cancellation: cancellation.clone(),
@@ -428,10 +433,11 @@ where
         context: RequestContext,
     ) -> Result<DownloadResult, ErrorObject> {
         let session = self.session(&params.watcher_id).await?;
-        if !session.target.prefix.is_empty() && !params.key.starts_with(&session.target.prefix) {
-            return Err(ErrorObject::invalid_params(
-                "key is outside the watcher's prefix",
-            ));
+        if !key_within_target(&session.target, session.template.as_ref(), &params.key) {
+            return Err(ErrorObject::invalid_params(format!(
+                "key \"{}\" is outside the watcher's target {}",
+                params.key, session.target_display
+            )));
         }
         let source = session
             .target
@@ -453,12 +459,16 @@ where
                 .download_object(request, Some(progress_tx), context.cancellation.clone());
         tokio::pin!(download);
         let mut progress_open = true;
+        // Remembered so a failure can say how far it got; the store does not
+        // know that once it has given up.
+        let mut bytes_seen = 0_u64;
         let result = loop {
             tokio::select! {
                 result = &mut download => break result,
                 progress = progress_rx.recv(), if progress_open => {
                     match progress {
                         Some(progress) => {
+                            bytes_seen = progress.bytes_transferred;
                             let notification = augment_progress(
                                 progress,
                                 &params.watcher_id,
@@ -473,6 +483,12 @@ where
                 }
             }
         };
+        // The store may have queued a last sample just before it finished, and
+        // the select above stops relaying the moment the download resolves.
+        // Drain it so a failure reports how far the download actually got.
+        while let Ok(progress) = progress_rx.try_recv() {
+            bytes_seen = progress.bytes_transferred;
+        }
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -485,6 +501,7 @@ where
                             "watcherId": params.watcher_id,
                             "downloadId": download_id,
                             "key": params.key,
+                            "bytesTransferred": bytes_seen,
                             "done": true,
                             "error": error_data
                         }),
@@ -618,6 +635,19 @@ async fn run_watcher(
     }
 }
 
+/// Whether a download key belongs to the watcher's target.
+///
+/// A plain target is a literal prefix. A templated one is matched
+/// structurally, because the dashboard keeps objects the watcher listed under
+/// periods that may since have left the lookback window; rendering the
+/// template now and comparing would reject exactly those.
+fn key_within_target(target: &S3Uri, template: Option<&DateTemplate>, key: &str) -> bool {
+    match template {
+        Some(template) => template.matches(key),
+        None => target.prefix.is_empty() || key.starts_with(&target.prefix),
+    }
+}
+
 fn augment_progress<T: serde::Serialize>(
     progress: T,
     watcher_id: &str,
@@ -654,7 +684,8 @@ mod tests {
 
     use chrono::TimeZone;
     use s3pulse_core::{
-        DownloadProgress, DownloadResult as CoreDownloadResult, RequestCounts, S3Object, StoreError,
+        DownloadProgress, DownloadResult as CoreDownloadResult, RequestCounts, S3Object,
+        StoreError, StoreErrorKind,
     };
 
     use super::*;
@@ -742,11 +773,62 @@ mod tests {
         }
     }
 
+    /// Lists like `FakeStore` but every download fails part-way, the way a
+    /// real GetObject does when the credentials can list but not read.
+    #[derive(Default)]
+    struct FailingDownloadStore;
+
+    #[async_trait]
+    impl ObjectStore for FailingDownloadStore {
+        async fn list_objects(
+            &self,
+            target: &S3Uri,
+            max_objects: usize,
+        ) -> Result<Vec<S3Object>, StoreError> {
+            FakeStore.list_objects(target, max_objects).await
+        }
+
+        async fn download_object(
+            &self,
+            _request: DownloadRequest,
+            progress: Option<mpsc::Sender<DownloadProgress>>,
+            _cancellation: CancellationToken,
+        ) -> Result<CoreDownloadResult, StoreError> {
+            if let Some(progress) = progress {
+                let _ = progress
+                    .send(DownloadProgress::new(7, Some(42), false))
+                    .await;
+            }
+            Err(StoreError::new(
+                StoreErrorKind::AccessDenied,
+                "GetObject failed: AccessDenied: Access Denied",
+                false,
+            ))
+        }
+    }
+
+    struct FailingFactory;
+
+    #[async_trait]
+    impl StoreFactory for FailingFactory {
+        async fn create(
+            &self,
+            _profile: Option<String>,
+            _region: Option<String>,
+        ) -> Result<Arc<dyn ObjectStore>, String> {
+            Ok(Arc::new(FailingDownloadStore))
+        }
+    }
+
     fn definition() -> WatchDefinition {
+        definition_for("s3://bucket/feed/")
+    }
+
+    fn definition_for(target: &str) -> WatchDefinition {
         WatchDefinition {
             id: Some("feed".to_owned()),
             name: Some("Feed".to_owned()),
-            target: "s3://bucket/feed/".to_owned(),
+            target: target.to_owned(),
             profile: None,
             region: None,
             poll_interval_seconds: 3_600,
@@ -761,6 +843,16 @@ mod tests {
         RequestContext::new(CancellationToken::new(), notifier)
     }
 
+    fn download_params(key: &str) -> ObjectDownloadParams {
+        ObjectDownloadParams {
+            watcher_id: "feed".to_owned(),
+            download_id: Some("client-download".to_owned()),
+            key: key.to_owned(),
+            destination: PathBuf::from("object.parquet"),
+            overwrite: true,
+        }
+    }
+
     async fn wait_for_initial_poll(runtime: &CoreRuntime<FakeFactory>) {
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
@@ -773,6 +865,29 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[test]
+    fn a_plain_target_is_a_literal_prefix_and_a_templated_one_is_a_shape() {
+        let plain: S3Uri = "s3://bucket/feed/".parse().unwrap();
+        assert!(key_within_target(&plain, None, "feed/object.parquet"));
+        assert!(!key_within_target(&plain, None, "other/object.parquet"));
+
+        let root: S3Uri = "s3://bucket/".parse().unwrap();
+        assert!(key_within_target(&root, None, "anything"));
+
+        let templated: S3Uri = "s3://bucket/feed/{yyyy}/{MM}/".parse().unwrap();
+        let template = DateTemplate::parse(&templated.prefix).unwrap().unwrap();
+        assert!(key_within_target(
+            &templated,
+            Some(&template),
+            "feed/2026/09/object.parquet"
+        ));
+        assert!(!key_within_target(
+            &templated,
+            Some(&template),
+            "feed/{yyyy}/{MM}/object.parquet"
+        ));
     }
 
     #[test]
@@ -896,6 +1011,133 @@ mod tests {
             .iter()
             .any(|(method, params)| method == "download.progress"
                 && params["bytesTransferred"] == 42));
+
+        runtime.watch_stop("feed".to_owned()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_on_a_templated_feed_accepts_any_rendering_of_the_template() {
+        let runtime = CoreRuntime::with_factory(Arc::new(FakeFactory), None, None);
+        let notifier = Arc::new(CapturingNotifier::default());
+        runtime
+            .watch_start(
+                definition_for("s3://bucket/feed/{yyyy}/{MM}/"),
+                context(Arc::clone(&notifier)),
+            )
+            .await
+            .unwrap();
+
+        // The key the feed lists and the dashboard shows: rendered, no braces.
+        let result = runtime
+            .object_download(
+                download_params("feed/2026/09/object.parquet"),
+                context(Arc::clone(&notifier)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.bytes, 42);
+
+        // Listed under a period that has since left the lookback window. The
+        // object is still on screen, so it must still download.
+        runtime
+            .object_download(
+                download_params("feed/2019/01/object.parquet"),
+                context(Arc::clone(&notifier)),
+            )
+            .await
+            .unwrap();
+
+        runtime.watch_stop("feed".to_owned()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_rejects_keys_outside_the_watcher_target() {
+        let runtime = CoreRuntime::with_factory(Arc::new(FakeFactory), None, None);
+        let notifier = Arc::new(CapturingNotifier::default());
+        runtime
+            .watch_start(
+                definition_for("s3://bucket/feed/{yyyy}/{MM}/"),
+                context(Arc::clone(&notifier)),
+            )
+            .await
+            .unwrap();
+
+        for key in [
+            "elsewhere/2026/09/object.parquet",
+            "feed/{yyyy}/{MM}/object.parquet",
+        ] {
+            let error = runtime
+                .object_download(download_params(key), context(Arc::clone(&notifier)))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, ErrorObject::INVALID_PARAMS, "{key}");
+            let detail = error.data.unwrap()["detail"].as_str().unwrap().to_owned();
+            assert!(detail.contains(key), "{detail}");
+            // Saying which target was expected is what turns the rejection
+            // from a riddle into something the user can act on.
+            assert!(detail.contains("s3://bucket/feed/{yyyy}/{MM}/"), "{detail}");
+        }
+        runtime.watch_stop("feed".to_owned()).await.unwrap();
+
+        // A plain prefix is still a literal guard.
+        runtime
+            .watch_start(definition(), context(Arc::clone(&notifier)))
+            .await
+            .unwrap();
+        let error = runtime
+            .object_download(
+                download_params("other/object.parquet"),
+                context(Arc::clone(&notifier)),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorObject::INVALID_PARAMS);
+        runtime.watch_stop("feed".to_owned()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_download_names_its_kind_on_the_response_and_the_notification() {
+        let runtime = CoreRuntime::with_factory(Arc::new(FailingFactory), None, None);
+        let notifier = Arc::new(CapturingNotifier::default());
+        runtime
+            .watch_start(definition(), context(Arc::clone(&notifier)))
+            .await
+            .unwrap();
+
+        let error = runtime
+            .object_download(
+                download_params("feed/object.parquet"),
+                context(Arc::clone(&notifier)),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorObject::BACKEND_ERROR);
+        assert_eq!(
+            error.message,
+            "GetObject failed: AccessDenied: Access Denied"
+        );
+        let data = error.data.unwrap();
+        assert_eq!(data["kind"], "accessDenied");
+        assert_eq!(data["retryable"], false);
+
+        // The notification is what a progress UI sees; it has to be parseable
+        // as progress (bytes so far) and carry the same error as the response.
+        let failure = {
+            let messages = notifier.messages.lock().unwrap();
+            messages
+                .iter()
+                .find(|(method, params)| method == "download.progress" && params["done"] == true)
+                .map(|(_, params)| params.clone())
+                .expect("a final download.progress notification")
+        };
+        assert_eq!(failure["downloadId"], "client-download");
+        assert_eq!(failure["bytesTransferred"], 7);
+        assert_eq!(failure["error"]["kind"], "accessDenied");
+        assert_eq!(
+            failure["error"]["message"],
+            "GetObject failed: AccessDenied: Access Denied"
+        );
+        assert_eq!(failure["error"]["retryable"], false);
 
         runtime.watch_stop("feed".to_owned()).await.unwrap();
     }

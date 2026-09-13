@@ -8,6 +8,24 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 Nothing yet.
 
+## [0.2.6] - 2026-09-13
+
+### Fixed
+
+- Downloading from a feed whose target carries date placeholders failed with
+  "key is outside the watcher's prefix". The guard compared the object's key
+  with the unrendered template, so every real key was rejected. It now
+  recognises any rendering of the template, including a period that has left
+  the lookback window but whose objects are still on screen.
+- A failed download says what kind of failure it was and whether a retry is
+  worth trying, using the same categories the feed itself reports, and the
+  full error with its code and data is written to Output → S3 Pulse, where
+  the toast's "Show Output" button lands. Before, the channel had nothing to
+  show.
+- The backend's final `download.progress` notification for a failed download
+  now carries the bytes written before the failure, and the extension no
+  longer drops that notification for lacking one.
+
 ## [0.2.5] - 2026-09-05
 
 ### Fixed

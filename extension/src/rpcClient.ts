@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import * as vscode from 'vscode';
 import {
+  describeRemoteError,
   isJsonRpcNotification,
   isJsonRpcResponse,
   JSON_RPC_VERSION,
@@ -29,19 +30,9 @@ export class RpcRemoteError extends Error {
     public readonly code: number,
     public readonly data?: unknown
   ) {
-    super(remoteErrorMessage(message, data));
+    super(describeRemoteError(message, data));
     this.name = 'RpcRemoteError';
   }
-}
-
-function remoteErrorMessage(message: string, data: unknown): string {
-  if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
-    const detail = (data as Record<string, unknown>).detail;
-    if (typeof detail === 'string' && detail.trim() && detail !== message) {
-      return `${message}: ${detail}`;
-    }
-  }
-  return message;
 }
 
 export class RpcClient implements vscode.Disposable {

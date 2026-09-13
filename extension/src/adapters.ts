@@ -1,4 +1,5 @@
 import type {
+  BackendErrorInfo,
   CostModel,
   FeedHealth,
   FeedHealthStatus,
@@ -310,20 +311,37 @@ export function normalizeWatchStatuses(value: unknown): WatchStatus[] {
     .filter((status) => status.watcherId !== '');
 }
 
+/** Reads the `{kind, message, retryable}` error shape, or a bare message. */
+export function normalizeBackendError(value: unknown): BackendErrorInfo | undefined {
+  if (typeof value === 'string') {
+    return value.trim() ? { message: value } : undefined;
+  }
+  const source = record(value);
+  const message = stringAt(source, 'message', 'description', 'detail');
+  if (!message) {
+    return undefined;
+  }
+  return { kind: stringAt(source, 'kind'), message, retryable: booleanAt(source, 'retryable') };
+}
+
 export function normalizeDownloadProgress(value: unknown): DownloadProgress | undefined {
   const source = record(value);
   const watcherId = stringAt(source, 'watcherId', 'watcher_id');
   const bytesTransferred = numberAt(source, 'bytesTransferred', 'bytes_transferred', 'bytes');
-  if (!watcherId || bytesTransferred === undefined) {
+  // The final sample of a failed download may not know how far it got, and
+  // it is the one sample that must not be dropped for a missing field.
+  const error = normalizeBackendError(valueAt(source, 'error'));
+  if (!watcherId || (bytesTransferred === undefined && !error)) {
     return undefined;
   }
   return {
     watcherId,
     downloadId: stringAt(source, 'downloadId', 'download_id'),
     key: stringAt(source, 'key'),
-    bytesTransferred,
+    bytesTransferred: bytesTransferred ?? 0,
     totalBytes: numberAt(source, 'totalBytes', 'total_bytes', 'size'),
-    done: booleanAt(source, 'done', 'complete') ?? false
+    done: booleanAt(source, 'done', 'complete') ?? error !== undefined,
+    error
   };
 }
 

@@ -57,6 +57,11 @@ impl PollingWatcher {
         Arc::clone(&self.history)
     }
 
+    /// The parsed date template, or `None` for an ordinary target.
+    pub fn template(&self) -> Option<&DateTemplate> {
+        self.template.as_ref()
+    }
+
     /// The concrete prefixes this poll will list.
     ///
     /// One entry for an ordinary target; for a templated one, the current

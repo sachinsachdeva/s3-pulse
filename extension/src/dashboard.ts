@@ -18,6 +18,7 @@ import {
 } from './adapters';
 import type { BackendService } from './backend';
 import type { FeedTreeProvider } from './feedTree';
+import { RpcRemoteError } from './rpcClient';
 import type { WatcherStore } from './watcherStore';
 import type {
   CostModel,
@@ -448,6 +449,9 @@ export class DashboardManager implements vscode.Disposable {
         return;
       }
       const text = errorMessage(error);
+      // Both toasts are transient, and "Show Output" opens the channel, so the
+      // channel has to hold the full error, code and data included.
+      this.output.appendLine(`[dashboard] “${watcher.name}” ${message.type} failed: ${errorDetail(error)}`);
       this.#panels.get(watcher.id)?.showError(text);
       void vscode.window.showErrorMessage(`S3 Pulse: ${text}`, 'Show Output').then((selection) => {
         if (selection === 'Show Output') {
@@ -576,6 +580,16 @@ export class DashboardManager implements vscode.Disposable {
         || (progress.downloadId && reporter.downloadId !== progress.downloadId)
         || (!progress.downloadId && progress.key && reporter.key !== progress.key)
       ) {
+        continue;
+      }
+      if (progress.error) {
+        // The response to object.download carries the same error and is what
+        // the user is shown; this is the record of how far the download got.
+        const { kind, message, retryable } = progress.error;
+        this.output.appendLine(
+          `[download] ${reporter.key} failed after ${formatBytes(progress.bytesTransferred)}: `
+          + `${kind ? `${kind}: ` : ''}${message}${retryable === undefined ? '' : ` (retryable: ${String(retryable)})`}`
+        );
         continue;
       }
       let increment: number | undefined;
@@ -767,6 +781,16 @@ class FeedDashboard implements vscode.Disposable {
       void this.#panel.webview.postMessage(message);
     }
   }
+}
+
+/** The message plus, for a backend error, the code and data the toast omits. */
+function errorDetail(error: unknown): string {
+  const text = errorMessage(error);
+  if (error instanceof RpcRemoteError) {
+    const data = error.data === undefined ? '' : `, data ${JSON.stringify(error.data)}`;
+    return `${text} (code ${error.code}${data})`;
+  }
+  return text;
 }
 
 function parseWebviewMessage(value: unknown): WebviewMessage | undefined {

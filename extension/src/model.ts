@@ -126,6 +126,15 @@ export interface CostModel {
   readonly enabled: boolean;
 }
 
+/** A failure the backend reported, on an error response or a notification. */
+export interface BackendErrorInfo {
+  /** Stable category from the protocol, for example `accessDenied`. */
+  readonly kind?: string;
+  readonly message: string;
+  /** Whether the backend expects a retry could succeed. */
+  readonly retryable?: boolean;
+}
+
 export interface DownloadProgress {
   readonly watcherId: string;
   readonly downloadId?: string;
@@ -133,4 +142,6 @@ export interface DownloadProgress {
   readonly bytesTransferred: number;
   readonly totalBytes?: number;
   readonly done: boolean;
+  /** Present on the final sample of a download that failed. */
+  readonly error?: BackendErrorInfo;
 }
