@@ -90,3 +90,46 @@ export function isJsonRpcNotification(value: unknown): value is JsonRpcNotificat
     && typeof source.method === 'string'
     && !Object.hasOwn(source, 'id');
 }
+
+/**
+ * What each backend failure category means for the person reading it. The
+ * backend's message already carries the AWS error code; this says whose
+ * problem it is and what to do about it.
+ */
+const KIND_HINTS: Readonly<Record<string, string>> = {
+  authentication: 'AWS credentials are missing or expired; sign in again',
+  accessDenied: 'access denied; check the IAM policy for this bucket and key, and any KMS key policy',
+  notFound: 'the bucket, key or prefix was not found',
+  network: 'the request did not reach S3; check network and region',
+  serviceUnavailable: 'S3 reported a server-side failure, which is not a problem on your side',
+  io: 'a local file operation failed; try another destination folder',
+  alreadyExists: 'it already exists',
+  invalidResponse: 'S3 answered with something unusable',
+  cancelled: 'cancelled',
+  other: 'unclassified failure'
+};
+
+/**
+ * Builds the user-facing text for a JSON-RPC error. Invalid-params and
+ * backend errors carry a `detail`; store failures carry a `kind` and whether
+ * the backend thinks a retry could succeed. Without the kind, an expired
+ * token and a denied bucket policy read the same and send the user to the
+ * wrong place.
+ */
+export function describeRemoteError(message: string, data: unknown): string {
+  const source = record(data);
+  if (!source) {
+    return message;
+  }
+  const detail = source.detail;
+  if (typeof detail === 'string' && detail.trim() && detail !== message) {
+    return `${message}: ${detail}`;
+  }
+  const kind = source.kind;
+  if (typeof kind === 'string' && kind.trim()) {
+    const hint = KIND_HINTS[kind] ?? kind;
+    const retry = source.retryable === true ? ', retrying may succeed' : '';
+    return `${message} (${hint}${retry})`;
+  }
+  return message;
+}

@@ -194,7 +194,17 @@ views.
 `downloadId` is optional for compatibility but clients should generate it so
 progress can be correlated before the final response. The result is returned
 after the download succeeds and includes `watcherId`, `downloadId`,
-`destination`, and `bytes`. Partial temporary files are removed on failure or
+`destination`, and `bytes`.
+
+`key` must lie under the watcher's target. For a target with date placeholders
+any rendering of the template is accepted, so an object listed under a period
+that has since left the lookback window can still be downloaded. A key
+elsewhere in the bucket is rejected with an invalid-params error naming the
+target.
+
+On failure the request errors with `data: {kind, message, retryable}` as
+described under Errors, after a final `download.progress` notification
+carrying the same error. Partial temporary files are removed on failure or
 cancellation.
 
 ### Cancellation
@@ -217,7 +227,11 @@ Every watcher-scoped notification includes `watcherId` in `params`.
 - `statistics.updated`: contains the latest `statistics` snapshot and the
   watcher's cumulative `requestCounts`.
 - `download.progress`: contains `downloadId`, `key`, `bytesTransferred`,
-  optional `totalBytes`, and `done`.
+  optional `totalBytes`, and `done`. The final notification of a download that
+  failed has `done: true`, `bytesTransferred` equal to the bytes written before
+  the failure, and an `error` object with the same `kind`, `message` and
+  `retryable` fields as `watch.error`. The request's error response remains
+  authoritative.
 - `watch.error`: contains a stable `code`, user-facing `message`, and optional
   retry information.
 

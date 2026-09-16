@@ -11,6 +11,8 @@ import {
   normalizeRequestCounts,
   projectedMonthlyCost,
   mergeObjects,
+  normalizeBackendError,
+  normalizeDownloadProgress,
   normalizeHistory,
   normalizeObjects,
   normalizeStatistics,
@@ -76,6 +78,38 @@ test('normalizes history and watcher envelopes', () => {
   assert.equal(normalizeWatchStatuses({ watchers: [
     { watcherId: 'one', status: 'running' }
   ] })[0]?.status, 'running');
+});
+
+test('a failed download parses as progress even without a byte count', () => {
+  // The shape the backend emitted before it learned to report bytes on
+  // failure. Dropping it left the Output channel with nothing to show.
+  const failure = { kind: 'network', message: 'GetObject failed: dispatch failure', retryable: true };
+  assert.deepEqual(
+    normalizeDownloadProgress({ watcherId: 'plain', downloadId: 'dl-1', key: 'feed/object.parquet', done: true, error: failure }),
+    { watcherId: 'plain', downloadId: 'dl-1', key: 'feed/object.parquet', bytesTransferred: 0, totalBytes: undefined, done: true, error: failure }
+  );
+  assert.equal(
+    normalizeDownloadProgress({ watcherId: 'w', bytesTransferred: 7, done: true, error: { message: 'x' } })?.bytesTransferred,
+    7
+  );
+  // Ordinary samples are unchanged, and a sample with neither bytes nor an
+  // error is still nothing.
+  assert.deepEqual(
+    normalizeDownloadProgress({ watcherId: 'w', bytesTransferred: 42, totalBytes: 100, done: false }),
+    { watcherId: 'w', downloadId: undefined, key: undefined, bytesTransferred: 42, totalBytes: 100, done: false, error: undefined }
+  );
+  assert.equal(normalizeDownloadProgress({ watcherId: 'w', done: true }), undefined);
+  assert.equal(normalizeDownloadProgress({ bytesTransferred: 1 }), undefined);
+});
+
+test('reads a backend error from either wire shape', () => {
+  assert.deepEqual(
+    normalizeBackendError({ kind: 'accessDenied', message: 'denied', retryable: false }),
+    { kind: 'accessDenied', message: 'denied', retryable: false }
+  );
+  assert.deepEqual(normalizeBackendError('plain text'), { message: 'plain text' });
+  assert.equal(normalizeBackendError({ kind: 'network' }), undefined, 'a kind without a message is not an error');
+  assert.equal(normalizeBackendError(undefined), undefined);
 });
 
 test('validates and canonicalizes S3 targets', () => {

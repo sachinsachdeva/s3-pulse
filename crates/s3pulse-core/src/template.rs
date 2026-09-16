@@ -72,6 +72,17 @@ impl Field {
         }
     }
 
+    /// Digit widths a rendered value can have, in the order to try them when
+    /// matching a key. The unpadded variants render one or two digits; two is
+    /// tried first so `{M}{dd}` still recognises `1201`.
+    fn widths(self) -> &'static [usize] {
+        match self {
+            Self::Year4 => &[4],
+            Self::Year2 | Self::Month2 | Self::Day2 | Self::Hour2 => &[2],
+            Self::Month1 | Self::Day1 | Self::Hour1 => &[2, 1],
+        }
+    }
+
     fn render(self, at: NaiveDateTime) -> String {
         match self {
             Self::Year4 => format!("{:04}", at.year()),
@@ -201,6 +212,18 @@ impl DateTemplate {
         prefixes
     }
 
+    /// Whether `key` lies under some rendering of this template.
+    ///
+    /// Structural rather than temporal: any digits of the right width are
+    /// accepted, so an object listed under a lookback period that has since
+    /// left the window is still recognised as this watcher's. Resolving the
+    /// template at the moment of asking would reject exactly those objects.
+    /// Whatever follows the last segment is the object's own name and is not
+    /// inspected.
+    pub fn matches(&self, key: &str) -> bool {
+        matches_segments(&self.segments, key)
+    }
+
     fn render(&self, at: NaiveDateTime) -> String {
         let mut out = String::new();
         for segment in &self.segments {
@@ -238,6 +261,25 @@ impl DateTemplate {
                 naive(year, at.month(), day, at).unwrap_or(at)
             }
         }
+    }
+}
+
+fn matches_segments(segments: &[Segment], rest: &str) -> bool {
+    let Some((first, tail)) = segments.split_first() else {
+        return true;
+    };
+    match first {
+        Segment::Literal(text) => rest
+            .strip_prefix(text.as_str())
+            .is_some_and(|rest| matches_segments(tail, rest)),
+        Segment::Field(field) => field.widths().iter().any(|&width| {
+            // Checked on bytes so the slice below always lands on a char
+            // boundary: a run of ASCII digits is one byte each.
+            rest.as_bytes()
+                .get(..width)
+                .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
+                && matches_segments(tail, &rest[width..])
+        }),
     }
 }
 
@@ -284,6 +326,58 @@ mod tests {
     fn a_prefix_without_placeholders_is_not_a_template() {
         assert_eq!(DateTemplate::parse("trades/").unwrap(), None);
         assert_eq!(DateTemplate::parse("").unwrap(), None);
+    }
+
+    #[test]
+    fn a_template_matches_keys_under_any_of_its_renderings() {
+        let hive = DateTemplate::parse("trades/{yyyy}/{MM}/{dd}/")
+            .unwrap()
+            .unwrap();
+        assert!(hive.matches("trades/2026/09/13/trades_0057.parquet"));
+        // Older than any lookback window: the match is structural, not
+        // "what would the watcher list right now".
+        assert!(hive.matches("trades/2019/01/01/trades_0001.parquet"));
+
+        assert!(!hive.matches("other/2026/09/13/trades_0057.parquet"));
+        assert!(
+            !hive.matches("trades/2026/9/13/x"),
+            "{{MM}} needs two digits"
+        );
+        assert!(
+            !hive.matches("trades/{yyyy}/{MM}/{dd}/x"),
+            "the unrendered template is not a key"
+        );
+        assert!(
+            !hive.matches("trades/2026/09/13"),
+            "a bare period prefix is not an object"
+        );
+
+        let compact = DateTemplate::parse("trades/{yyyy}{MM}{dd}/")
+            .unwrap()
+            .unwrap();
+        assert!(compact.matches("trades/20260913/x"));
+        assert!(!compact.matches("trades/2026-09-13/x"));
+    }
+
+    #[test]
+    fn unpadded_placeholders_match_one_or_two_digits() {
+        let month = DateTemplate::parse("feed/{M}/").unwrap().unwrap();
+        assert!(month.matches("feed/9/x"));
+        assert!(month.matches("feed/12/x"));
+        assert!(!month.matches("feed/123/x"));
+
+        // Two digits are tried before one, so an unpadded field directly
+        // followed by a padded one still lines up.
+        let adjacent = DateTemplate::parse("feed/{M}{dd}/").unwrap().unwrap();
+        assert!(adjacent.matches("feed/1201/x"));
+        assert!(adjacent.matches("feed/901/x"));
+    }
+
+    #[test]
+    fn escaped_braces_match_literally() {
+        let template = DateTemplate::parse("a{{b}}/{yyyy}/").unwrap().unwrap();
+        assert!(template.matches("a{b}/2026/x"));
+        assert!(!template.matches("a{{b}}/2026/x"));
     }
 
     #[test]
