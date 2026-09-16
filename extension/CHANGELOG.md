@@ -8,6 +8,17 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 Nothing yet.
 
+## [0.2.7] - 2026-09-16
+
+### Security
+
+- The bundled backend now links rustls 0.23.45. The previous version accepted
+  a plaintext `EncryptedExtensions` message packed into the same record as the
+  `ServerHello` (RUSTSEC-2026-0285, GHSA-2mjx-qc3c-rqvc). The handshake stays
+  authenticated either way, so the practical exposure for a TLS client talking
+  to AWS was low, but the backend ships inside the extension and cannot be
+  patched separately, hence a release of its own.
+
 ## [0.2.6] - 2026-09-13
 
 ### Fixed
