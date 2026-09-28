@@ -6,7 +6,18 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Dashboard grid columns can be resized. Drag the right edge of a column
+  header, or focus it and use the arrow keys; double-click the edge to fit the
+  column to its content. Widths are kept for that dashboard tab, like its sort
+  order.
+
+### Fixed
+
+- **Copy URI** dropped a leading `/` from the object key, so a key such as
+  `/exports/day.csv` was copied as `s3://bucket/exports/day.csv`, which names a
+  different object. The key is now used exactly as S3 listed it.
 
 ## [0.2.7] - 2026-09-16
 
