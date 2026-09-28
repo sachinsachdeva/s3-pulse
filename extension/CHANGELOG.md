@@ -6,6 +6,10 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.8] - 2026-09-28
+
 ### Added
 
 - Dashboard grid columns can be resized. Drag the right edge of a column
