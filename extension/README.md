@@ -15,7 +15,7 @@ S3 Pulse does not create, upload, delete, or modify S3 resources.
 1. Open the S3 Pulse activity-bar view.
 2. Choose **Add Feed**, then enter an `s3://bucket/prefix/` URI and polling settings.
 3. Start the feed and open its dashboard.
-4. Select a row to download it or copy its S3 URI/key.
+4. Select a row to download it or copy its S3 URI/key. Drag a column header's edge to resize it, or double-click the edge to fit its content.
 
 Feed definitions are persisted in VS Code global state. AWS credentials are never stored there.
 

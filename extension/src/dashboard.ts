@@ -940,9 +940,20 @@ function dashboardHtml(webview: vscode.Webview, watcherId: string): string {
     th button::after { content: ''; margin-left: 5px; }
     th[aria-sort="ascending"] button::after { content: '\\2191'; }
     th[aria-sort="descending"] button::after { content: '\\2193'; }
+    /* The handle straddles the header's right edge, above the sort button. */
+    th .resize { position: absolute; top: 0; right: 0; bottom: 0; width: 8px; z-index: 2; cursor: col-resize; touch-action: none; }
+    th .resize::after { content: ''; position: absolute; top: 25%; bottom: 25%; right: 3px; width: 1px; background: var(--vscode-panel-border); }
+    th .resize:hover::after, th .resize:focus-visible::after, th .resize.active::after { top: 0; bottom: 0; right: 2px; width: 3px; background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder)); }
+    th .resize:focus-visible { outline: none; }
+    #grid.resizing { cursor: col-resize; user-select: none; }
+    /* Once a column has been sized every width is explicit, and fixed layout
+       keeps content from overriding what the user dragged. */
+    #grid.sized { table-layout: fixed; }
+    #grid.sized td, #grid.sized th button { overflow: hidden; text-overflow: ellipsis; }
     td { padding: 7px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
     tbody tr:hover { background: var(--vscode-list-hoverBackground); }
     td.key { max-width: 520px; overflow: hidden; text-overflow: ellipsis; }
+    #grid.sized td.key { max-width: none; }
     td.number { text-align: right; font-variant-numeric: tabular-nums; }
     .row-actions { display: flex; gap: 3px; }
     .row-actions button { width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--vscode-foreground); border-radius: 3px; }
@@ -992,8 +1003,8 @@ function dashboardHtml(webview: vscode.Webview, watcherId: string): string {
     <section aria-labelledby="files-title">
       <div class="section-heading"><h2 id="files-title">Recent files</h2><span id="file-count" aria-live="polite">0 files</span></div>
       <div class="grid-tools"><label class="sr-only" for="search">Search objects</label><input id="search" type="search" placeholder="Search key, storage class, or ETag…" autocomplete="off"><span id="filter-count"></span></div>
-      <div class="table-scroll">
-        <table>
+      <div class="table-scroll" id="grid-scroll">
+        <table id="grid">
           <thead><tr>
             <th data-column="key" aria-sort="none"><button type="button">Key</button></th>
             <th data-column="lastModified" aria-sort="descending"><button type="button">Modified</button></th>
@@ -1001,7 +1012,7 @@ function dashboardHtml(webview: vscode.Webview, watcherId: string): string {
             <th data-column="age" aria-sort="none" class="hide-small"><button type="button">Age</button></th>
             <th data-column="intervalSeconds" aria-sort="none"><button type="button">Δ previous</button></th>
             <th data-column="storageClass" aria-sort="none" class="hide-small"><button type="button">Storage class</button></th>
-            <th><span class="sr-only">Actions</span></th>
+            <th id="actions-column"><span class="sr-only">Actions</span></th>
           </tr></thead>
           <tbody id="rows"></tbody>
         </table>
@@ -1020,9 +1031,15 @@ function dashboardHtml(webview: vscode.Webview, watcherId: string): string {
       // carries the id needed to reconnect it to its feed.
       const WATCHER_ID = document.body.dataset.watcherId || '';
       const prior = vscode.getState() || {};
-      const state = { feed: null, status: { status: 'stopped' }, objects: [], history: [], statistics: {}, sort: prior.sort || { column: 'lastModified', direction: 'desc' }, search: prior.search || '', graphMode: prior.graphMode || null, bucket: 15, requestCounts: null, cost: null, versions: null };
+      const state = { feed: null, status: { status: 'stopped' }, objects: [], history: [], statistics: {}, sort: prior.sort || { column: 'lastModified', direction: 'desc' }, search: prior.search || '', graphMode: prior.graphMode || null, bucket: 15, requestCounts: null, cost: null, versions: null, widths: prior.widths && typeof prior.widths === 'object' ? prior.widths : {} };
       const byId = (id) => document.getElementById(id);
       const rows = byId('rows');
+      const grid = byId('grid');
+      const gridScroll = byId('grid-scroll');
+      // Up here because the handles are built during boot. Defaults cover a
+      // column that was hidden (narrow panel) when the rest were first sized,
+      // so it has a width to come back with.
+      const COLUMN_WIDTH = { min: 48, max: 1600, actions: 100, step: 10, defaults: { key: 320, lastModified: 170, size: 90, age: 100, intervalSeconds: 110, storageClass: 130 } };
       const search = byId('search');
       const graph = byId('graph');
       const graphTip = byId('graph-tip');
@@ -1048,6 +1065,10 @@ function dashboardHtml(webview: vscode.Webview, watcherId: string): string {
         state.sort = state.sort.column === column ? { column, direction: state.sort.direction === 'asc' ? 'desc' : 'asc' } : { column, direction: column === 'key' || column === 'storageClass' ? 'asc' : 'desc' };
         persist(); renderGrid();
       }));
+      const headers = Array.from(document.querySelectorAll('th[data-column]'));
+      headers.forEach((header) => header.appendChild(resizeHandle(header)));
+      layoutColumns();
+      new ResizeObserver(() => layoutColumns()).observe(gridScroll);
       rows.addEventListener('click', (event) => {
         const button = event.target.closest('button[data-action]');
         if (button) vscode.postMessage({ type: button.dataset.action, key: button.dataset.key });
@@ -1254,6 +1275,87 @@ function dashboardHtml(webview: vscode.Webview, watcherId: string): string {
 
       function compare(a, b) { return typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b)); }
 
+      function resizeHandle(header) {
+        const column = header.dataset.column;
+        const handle = document.createElement('div');
+        handle.className = 'resize'; handle.tabIndex = 0; handle.title = 'Drag to resize, double-click to fit';
+        handle.setAttribute('role', 'separator'); handle.setAttribute('aria-orientation', 'vertical');
+        handle.setAttribute('aria-valuemin', String(COLUMN_WIDTH.min)); handle.setAttribute('aria-valuemax', String(COLUMN_WIDTH.max));
+        handle.setAttribute('aria-label', 'Resize ' + header.textContent.trim() + ' column');
+        handle.addEventListener('pointerdown', (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          const startX = event.clientX, startWidth = sizeColumns()[column];
+          handle.setPointerCapture(event.pointerId);
+          handle.classList.add('active'); grid.classList.add('resizing');
+          const move = (moved) => { state.widths[column] = startWidth + moved.clientX - startX; layoutColumns(); };
+          const end = () => {
+            handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', end); handle.removeEventListener('pointercancel', end);
+            handle.classList.remove('active'); grid.classList.remove('resizing'); persist();
+          };
+          handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', end); handle.addEventListener('pointercancel', end);
+        });
+        handle.addEventListener('dblclick', () => { sizeColumns(); state.widths[column] = fitWidth(header); layoutColumns(); persist(); });
+        handle.addEventListener('keydown', (event) => {
+          const step = event.key === 'ArrowRight' ? COLUMN_WIDTH.step : event.key === 'ArrowLeft' ? -COLUMN_WIDTH.step : 0;
+          if (!step) return;
+          event.preventDefault();
+          state.widths[column] = sizeColumns()[column] + step; layoutColumns(); persist();
+        });
+        return handle;
+      }
+
+      // Freezes the automatic layout into explicit widths, so the first resize
+      // starts from what is on screen rather than jumping to the defaults.
+      function sizeColumns() {
+        if (!Object.keys(state.widths).length) {
+          headers.forEach((header) => { const width = Math.round(header.getBoundingClientRect().width); if (width > 0) state.widths[header.dataset.column] = width; });
+          layoutColumns();
+        }
+        return state.widths;
+      }
+
+      // Columns keep the automatic layout until one is resized.
+      function layoutColumns() {
+        const sized = Object.keys(state.widths).length > 0;
+        grid.classList.toggle('sized', sized);
+        const layout = sized ? columnLayout(headers.map((header) => ({ column: header.dataset.column, visible: getComputedStyle(header).display !== 'none' })), state.widths, gridScroll.clientWidth) : null;
+        // In place: callers may already hold state.widths mid-assignment.
+        if (layout) Object.assign(state.widths, layout.widths);
+        headers.forEach((header) => {
+          const width = layout ? layout.widths[header.dataset.column] : 0;
+          header.style.width = width ? width + 'px' : '';
+          const handle = header.querySelector('.resize');
+          if (handle) handle.setAttribute('aria-valuenow', String(width || Math.round(header.getBoundingClientRect().width)));
+        });
+        byId('actions-column').style.width = layout ? layout.actions + 'px' : '';
+        grid.style.width = layout ? layout.table + 'px' : '';
+      }
+
+      // Hidden columns keep their width but take no space. The actions column
+      // absorbs the slack, so the grid always spans the panel and a narrowed
+      // column never squeezes the row buttons; wider columns scroll instead.
+      function columnLayout(columns, widths, available) {
+        const result = {};
+        let used = 0;
+        columns.forEach((entry) => {
+          const stored = widths[entry.column];
+          const width = typeof stored === 'number' && Number.isFinite(stored) ? stored : COLUMN_WIDTH.defaults[entry.column] || 120;
+          result[entry.column] = Math.round(Math.min(COLUMN_WIDTH.max, Math.max(COLUMN_WIDTH.min, width)));
+          if (entry.visible) used += result[entry.column];
+        });
+        const actions = Math.max(COLUMN_WIDTH.actions, Math.floor(Number(available) - used) || 0);
+        return { widths: result, actions, table: used + actions };
+      }
+
+      // The widest thing in the column: its label or any rendered cell.
+      function fitWidth(header) {
+        const index = Array.prototype.indexOf.call(header.parentElement.children, header);
+        let widest = header.querySelector('button').scrollWidth;
+        for (const row of rows.children) { const cell = row.children[index]; if (cell) widest = Math.max(widest, cell.scrollWidth); }
+        return widest + 2;
+      }
+
       function renderGraph() {
         const mode = state.graphMode || 'inter-arrival';
         byId('graph-mode').value = mode;
@@ -1404,7 +1506,7 @@ function dashboardHtml(webview: vscode.Webview, watcherId: string): string {
         const element = byId('toast'); element.textContent = String(message || ''); element.className = level === 'error' ? 'error' : ''; element.setAttribute('role', level === 'error' ? 'alert' : 'status'); element.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { element.hidden = true; }, level === 'error' ? 9000 : 3000);
       }
 
-      function persist() { vscode.setState({ watcherId: WATCHER_ID, sort: state.sort, search: state.search, graphMode: state.graphMode }); }
+      function persist() { vscode.setState({ watcherId: WATCHER_ID, sort: state.sort, search: state.search, graphMode: state.graphMode, widths: state.widths }); }
       function dateValue(value) { const result = Date.parse(value); return Number.isFinite(result) ? result : 0; }
       function dateTime(value) { const time = dateValue(value); return time ? new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'medium' }).format(time) : '—'; }
       function shortTime(value) { return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(value); }

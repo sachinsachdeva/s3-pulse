@@ -76,9 +76,11 @@ export function targetBucket(target: string): string | undefined {
   return /^s3:\/\/([^/]+)/i.exec(target)?.[1];
 }
 
+// The key is used verbatim: S3 keys may begin with '/', and stripping it
+// would name a different object, so s3://bucket//a is not s3://bucket/a.
 export function objectUri(target: string, key: string): string {
   const bucket = targetBucket(target);
-  return bucket ? `s3://${bucket}/${key.replace(/^\/+/, '')}` : target;
+  return bucket ? `s3://${bucket}/${key}` : target;
 }
 
 // Derives the name a save dialog should propose for an object key. Always
